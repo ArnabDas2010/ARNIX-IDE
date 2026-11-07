@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ide_background">#0D1117</color>
+    <color name="ide_surface">#161B22</color>
+    <color name="ide_primary">#58A6FF</color>
+    <color name="ide_accent">#7EE787</color>
+</resources>

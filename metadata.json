@@ -1,6 +1,6 @@
 {
-  "name": "ARNIX-IDE",
-  "description": "Clean, simple, lightweight and native Android IDE App With coding tools and github integration.",
+  "name": "ARNIX IDE",
+  "description": "Clean, simple, lightweight and native Android IDE with coding tools, file explorer, syntax highlighting, terminal emulator, and GitHub integration.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

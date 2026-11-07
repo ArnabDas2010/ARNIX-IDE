@@ -1,0 +1,136 @@
+name: Build & Release Android APKs
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+      release_title:
+        description: 'Release Title'
+        required: false
+        default: 'ARNIX IDE Release'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apks:
+    name: Build & Publish Release APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Debug Keystore
+        run: |
+          if [ ! -f "debug.keystore" ]; then
+            echo "Generating debug.keystore for signing..."
+            keytool -genkey -v -keystore debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          else
+            echo "debug.keystore already exists."
+          fi
+
+      - name: Build Release APKs (Splits & Universal)
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew :app:assembleRelease -PbuildSplits=true --stacktrace
+          else
+            gradle :app:assembleRelease -PbuildSplits=true --stacktrace
+          fi
+
+      - name: Collect and Rename APKs
+        run: |
+          mkdir -p release-apks
+          RELEASE_DIR="app/build/outputs/apk/release"
+
+          echo "Listing all built APKs in $RELEASE_DIR:"
+          ls -la "$RELEASE_DIR"
+
+          # Copy and rename for clean download names
+          cp "$RELEASE_DIR"/app-universal-release.apk release-apks/ARNIX-IDE-universal.apk 2>/dev/null || cp "$RELEASE_DIR"/app-release-unsigned.apk release-apks/ARNIX-IDE-universal.apk 2>/dev/null || cp "$RELEASE_DIR"/app-release.apk release-apks/ARNIX-IDE-universal.apk
+          cp "$RELEASE_DIR"/app-arm64-v8a-release.apk release-apks/ARNIX-IDE-arm64-v8a.apk 2>/dev/null || true
+          cp "$RELEASE_DIR"/app-armeabi-v7a-release.apk release-apks/ARNIX-IDE-armeabi-v7a.apk 2>/dev/null || true
+
+          cd release-apks
+          sha256sum *.apk > sha256_checksums.txt
+          echo "Generated APKs:"
+          ls -lh
+          cat sha256_checksums.txt
+
+      - name: Upload APKs as Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arnix-ide-apks
+          path: release-apks/*
+          retention-days: 30
+
+      - name: Determine Release Tag
+        id: get_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v1.0.0-$(date +'%Y%m%d%H%M')"
+          fi
+          echo "TAG_NAME=$TAG" >> $GITHUB_ENV
+          echo "Using Tag: $TAG"
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ github.event.inputs.release_title || format('ARNIX IDE {0}', env.TAG_NAME) }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## 🚀 ARNIX IDE Release (${{ env.TAG_NAME }})
+            
+            Clean, lightweight, and native Android IDE with coding tools, syntax highlighting, and Git/GitHub integration.
+            
+            ### 📦 Download Options for Real Android Devices:
+            - **`ARNIX-IDE-universal.apk`**: Recommended if unsure! Works on any Android phone (ARM32, ARM64, x86).
+            - **`ARNIX-IDE-arm64-v8a.apk`**: Optimized for modern Android smartphones (64-bit ARM). Smallest size & best performance.
+            - **`ARNIX-IDE-armeabi-v7a.apk`**: Optimized for older 32-bit Android devices.
+            
+            ### 🔑 Signature Details:
+            - Signed with standard Android Debug key for seamless sideloading without needing custom certificates.
+            - Target SDK: 36 | Min SDK: 26 (Android 8.0 Oreo and above)
+            
+            ### 🔒 Checksums (SHA-256):
+            See `sha256_checksums.txt` below.
+          files: |
+            release-apks/ARNIX-IDE-universal.apk
+            release-apks/ARNIX-IDE-arm64-v8a.apk
+            release-apks/ARNIX-IDE-armeabi-v7a.apk
+            release-apks/sha256_checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

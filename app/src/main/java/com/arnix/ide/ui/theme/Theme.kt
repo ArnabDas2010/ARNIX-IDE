@@ -51,13 +51,17 @@ fun ArnixTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as? Activity)?.window
-            if (window != null) {
-                window.statusBarColor = colorScheme.background.toArgb()
-                window.navigationBarColor = colorScheme.background.toArgb()
-                val insetsController = WindowCompat.getInsetsController(window, view)
-                insetsController.isAppearanceLightStatusBars = !darkTheme
-                insetsController.isAppearanceLightNavigationBars = !darkTheme
+            try {
+                val window = (view.context as? Activity)?.window
+                if (window != null) {
+                    window.statusBarColor = colorScheme.background.toArgb()
+                    window.navigationBarColor = colorScheme.background.toArgb()
+                    val insetsController = WindowCompat.getInsetsController(window, view)
+                    insetsController.isAppearanceLightStatusBars = !darkTheme
+                    insetsController.isAppearanceLightNavigationBars = !darkTheme
+                }
+            } catch (e: Throwable) {
+                // Non-fatal, prevent crashes on custom Android skins
             }
         }
     }

@@ -1,6 +1,8 @@
 package com.arnix.ide.ui.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import com.arnix.ide.ArnixApp
 import androidx.lifecycle.viewModelScope
 import com.arnix.ide.data.model.*
 import com.arnix.ide.data.repository.GitRepository
@@ -20,11 +22,18 @@ enum class IdeScreen {
 }
 
 class IdeViewModel(
-    private val workspaceRepo: WorkspaceRepository = WorkspaceRepository(),
+    application: Application
+) : AndroidViewModel(application) {
+
+    // Safe no-arg constructor for any ViewModelProvider factory
+    constructor() : this(ArnixApp.instance)
+
+    private val workspaceRepo: WorkspaceRepository = WorkspaceRepository(application)
     private val gitRepo: GitRepository = GitRepository()
-) : ViewModel() {
 
     val rootFiles: StateFlow<List<FileItem>> = workspaceRepo.rootFiles
+    val workspaceRootPath: StateFlow<String?> = workspaceRepo.workspaceRootPath
+    val workspaceName: StateFlow<String> = workspaceRepo.workspaceName
     val gitState: StateFlow<GitState> = gitRepo.gitState
 
     private val _currentScreen = MutableStateFlow(IdeScreen.EDITOR)
@@ -38,6 +47,15 @@ class IdeViewModel(
 
     private val _settings = MutableStateFlow(IdeSettings())
     val settings: StateFlow<IdeSettings> = _settings.asStateFlow()
+
+    // In-App File Manager State
+    private val _showFileManager = MutableStateFlow(false)
+    val showFileManager: StateFlow<Boolean> = _showFileManager.asStateFlow()
+
+    private val _fileManagerPath = MutableStateFlow(
+        android.os.Environment.getExternalStorageDirectory()?.absolutePath ?: "/storage/emulated/0"
+    )
+    val fileManagerPath: StateFlow<String> = _fileManagerPath.asStateFlow()
 
     // Undo / Redo stacks
     private val undoStack = mutableMapOf<String, MutableList<String>>()
@@ -335,5 +353,53 @@ class IdeViewModel(
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    // In-App File Manager Operations
+    fun openFileManager() {
+        val defaultDir = android.os.Environment.getExternalStorageDirectory()
+        val path = if (defaultDir != null && defaultDir.exists()) defaultDir.absolutePath else "/storage/emulated/0"
+        if (!java.io.File(_fileManagerPath.value).exists()) {
+            _fileManagerPath.value = path
+        }
+        _showFileManager.value = true
+    }
+
+    fun closeFileManager() {
+        _showFileManager.value = false
+    }
+
+    fun navigateFileManagerTo(path: String) {
+        val f = java.io.File(path)
+        if (f.exists() && f.isDirectory) {
+            _fileManagerPath.value = f.absolutePath
+        }
+    }
+
+    fun navigateFileManagerUp() {
+        val current = java.io.File(_fileManagerPath.value)
+        val parent = current.parentFile
+        if (parent != null && parent.canRead()) {
+            _fileManagerPath.value = parent.absolutePath
+        }
+    }
+
+    fun selectWorkspaceFolder(folderPath: String) {
+        workspaceRepo.setWorkspaceFolder(folderPath)
+        _showFileManager.value = false
+        _currentScreen.value = IdeScreen.EXPLORER
+    }
+
+    fun openExternalFileInEditor(file: java.io.File) {
+        val item = workspaceRepo.findFileByPath(file.absolutePath) ?: FileItem(
+            id = file.absolutePath,
+            name = file.name,
+            path = file.absolutePath,
+            isDirectory = false,
+            extension = file.extension,
+            content = try { file.readText(Charsets.UTF_8) } catch (e: Exception) { "" }
+        )
+        openFileInEditor(item)
+        _showFileManager.value = false
     }
 }

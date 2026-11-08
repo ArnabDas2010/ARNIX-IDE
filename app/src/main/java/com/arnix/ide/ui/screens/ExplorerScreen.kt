@@ -43,6 +43,8 @@ private fun flattenTree(items: List<FileItem>, depth: Int = 0): List<FlatFileRow
 @Composable
 fun ExplorerScreen(
     files: List<FileItem>,
+    workspaceName: String,
+    onBrowseClick: () -> Unit,
     onOpenFile: (FileItem) -> Unit,
     onToggleFolder: (String) -> Unit,
     onNewFileClick: (String) -> Unit,
@@ -68,64 +70,130 @@ fun ExplorerScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(
                             text = "PROJECT EXPLORER",
                             color = IdeTextPrimary,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = "Workspace / ARNIX-IDE",
-                            color = IdeTextSecondary,
-                            fontSize = 12.sp
+                            text = workspaceName,
+                            color = IdeSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
 
-                    FilledTonalButton(
-                        onClick = { onNewFileClick("") },
-                        modifier = Modifier
-                            .height(32.dp)
-                            .testTag("btn_new_file_root"),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = IdePrimaryContainer,
-                            contentColor = IdeTextPrimary
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = stringResource(R.string.action_new_file),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("New", fontSize = 12.sp)
+                        // Browse storage button
+                        OutlinedButton(
+                            onClick = onBrowseClick,
+                            modifier = Modifier
+                                .height(32.dp)
+                                .testTag("btn_browse_storage"),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, IdePrimary.copy(alpha = 0.6f))
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_folder_open),
+                                contentDescription = "Browse Device Files",
+                                tint = IdePrimary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Browse",
+                                fontSize = 12.sp,
+                                color = IdePrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // New file button
+                        FilledTonalButton(
+                            onClick = { onNewFileClick("") },
+                            modifier = Modifier
+                                .height(32.dp)
+                                .testTag("btn_new_file_root"),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = IdePrimaryContainer,
+                                contentColor = IdeTextPrimary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = stringResource(R.string.action_new_file),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("New", fontSize = 12.sp)
+                        }
                     }
                 }
             }
 
             // Files Tree List
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                items(flatFiles, key = { it.item.id }) { row ->
-                    FileRowItem(
-                        item = row.item,
-                        depth = row.depth,
-                        onOpenFile = onOpenFile,
-                        onToggleFolder = onToggleFolder,
-                        onNewFile = onNewFileClick,
-                        onDelete = { fileToDelete = it }
-                    )
+            if (flatFiles.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_folder_open),
+                            contentDescription = null,
+                            tint = IdeTextMuted,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            text = "Workspace is empty",
+                            color = IdeTextSecondary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Tap 'Browse' to select a folder from your storage, or 'New' to create files.",
+                            color = IdeTextMuted,
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    items(flatFiles, key = { it.item.id }) { row ->
+                        FileRowItem(
+                            item = row.item,
+                            depth = row.depth,
+                            onOpenFile = onOpenFile,
+                            onToggleFolder = onToggleFolder,
+                            onNewFile = onNewFileClick,
+                            onDelete = { fileToDelete = it }
+                        )
+                    }
                 }
             }
         }

@@ -31,6 +31,9 @@ fun ArnixMainScreen(
     val openTabs by viewModel.openTabs.collectAsState()
     val activeTabId by viewModel.activeTabId.collectAsState()
     val rootFiles by viewModel.rootFiles.collectAsState()
+    val workspaceName by viewModel.workspaceName.collectAsState()
+    val showFileManager by viewModel.showFileManager.collectAsState()
+    val fileManagerPath by viewModel.fileManagerPath.collectAsState()
     val gitState by viewModel.gitState.collectAsState()
     val terminalLines by viewModel.terminalLines.collectAsState()
     val settings by viewModel.settings.collectAsState()
@@ -38,7 +41,7 @@ fun ArnixMainScreen(
     val targetFolderPath by viewModel.targetFolderPath.collectAsState()
 
     // Handle Back Press gracefully: returns to Editor screen if on another screen
-    BackHandler(enabled = currentScreen != IdeScreen.EDITOR) {
+    BackHandler(enabled = currentScreen != IdeScreen.EDITOR && !showFileManager) {
         viewModel.setScreen(IdeScreen.EDITOR)
     }
 
@@ -234,6 +237,8 @@ fun ArnixMainScreen(
                 IdeScreen.EXPLORER -> {
                     ExplorerScreen(
                         files = rootFiles,
+                        workspaceName = workspaceName,
+                        onBrowseClick = { viewModel.openFileManager() },
                         onOpenFile = { viewModel.openFileInEditor(it) },
                         onToggleFolder = { viewModel.toggleFolder(it) },
                         onNewFileClick = { viewModel.openNewFileDialog(it) },
@@ -360,6 +365,18 @@ fun ArnixMainScreen(
                         }
                     },
                     containerColor = IdeSurface
+                )
+            }
+
+            // In-App Native File Manager Screen (No external apps, double click sets workspace)
+            if (showFileManager) {
+                FileManagerScreen(
+                    currentPath = fileManagerPath,
+                    onNavigateTo = { viewModel.navigateFileManagerTo(it) },
+                    onNavigateUp = { viewModel.navigateFileManagerUp() },
+                    onSelectWorkspaceFolder = { viewModel.selectWorkspaceFolder(it) },
+                    onOpenFileInEditor = { viewModel.openExternalFileInEditor(it) },
+                    onClose = { viewModel.closeFileManager() }
                 )
             }
         }

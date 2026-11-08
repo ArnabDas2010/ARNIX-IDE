@@ -94,6 +94,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
+    implementation(libs.androidx.documentfile)
+
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

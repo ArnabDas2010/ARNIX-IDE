@@ -1,21 +1,110 @@
 package com.arnix.ide.data.repository
 
+import android.content.Context
 import com.arnix.ide.data.model.FileItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import java.util.UUID
 
-class WorkspaceRepository {
+class WorkspaceRepository(private val context: Context? = null) {
 
     private val _rootFiles = MutableStateFlow<List<FileItem>>(emptyList())
     val rootFiles: StateFlow<List<FileItem>> = _rootFiles.asStateFlow()
+
+    private val _workspaceRootPath = MutableStateFlow<String?>("Sample Workspace")
+    val workspaceRootPath: StateFlow<String?> = _workspaceRootPath.asStateFlow()
+
+    private val _workspaceName = MutableStateFlow("ARNIX-IDE Project")
+    val workspaceName: StateFlow<String> = _workspaceName.asStateFlow()
 
     init {
         seedSampleWorkspace()
     }
 
+    fun setWorkspaceFolder(folderPath: String) {
+        val dir = File(folderPath)
+        _workspaceRootPath.value = dir.absolutePath
+        _workspaceName.value = dir.name.ifEmpty { dir.absolutePath }
+        _rootFiles.value = loadFilesFromDisk(dir, currentDepth = 0, maxDepth = 4)
+    }
+
+    fun refreshWorkspace() {
+        val currentPath = _workspaceRootPath.value
+        if (currentPath != null && currentPath != "Sample Workspace") {
+            val dir = File(currentPath)
+            _rootFiles.value = loadFilesFromDisk(dir, currentDepth = 0, maxDepth = 4)
+            return
+        }
+        seedSampleWorkspace()
+    }
+
+    private fun loadFilesFromDisk(directory: File, currentDepth: Int, maxDepth: Int): List<FileItem> {
+        val robustItems = if (context != null) {
+            StorageAccessHelper.listFilesRobust(context, directory, showHidden = false)
+        } else {
+            val files = directory.listFiles() ?: emptyArray()
+            files.map { com.arnix.ide.data.model.FileManagerItem.fromFile(it) }
+        }
+
+        val sortedItems = robustItems.filter { !it.name.startsWith(".git") && it.name != "build" && it.name != ".gradle" }
+            .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+
+        return sortedItems.map { item ->
+            val file = File(item.path)
+            val isDir = item.isDirectory
+            val ext = if (isDir) "" else item.extension
+            val children = if (isDir && currentDepth < maxDepth) {
+                loadFilesFromDisk(file, currentDepth + 1, maxDepth)
+            } else {
+                emptyList()
+            }
+
+            val content = if (!isDir) {
+                if (context != null) {
+                    StorageAccessHelper.readFileRobust(context, item.path)
+                } else {
+                    try {
+                        if (file.exists() && file.length() < 2 * 1024 * 1024) {
+                            file.readText(Charsets.UTF_8)
+                        } else {
+                            ""
+                        }
+                    } catch (e: Exception) {
+                        ""
+                    }
+                }
+            } else {
+                ""
+            }
+
+            FileItem(
+                id = item.path,
+                name = item.name,
+                path = item.path,
+                isDirectory = isDir,
+                extension = ext,
+                content = content,
+                children = children,
+                isExpanded = currentDepth < 1
+            )
+        }
+    }
+
+    private fun readViaShell(filePath: String): String {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "cat \"$filePath\" | head -n 500"))
+            process.inputStream.bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            "// Cannot read $filePath: ${e.localizedMessage}"
+        }
+    }
+
     private fun seedSampleWorkspace() {
+        _workspaceRootPath.value = "Sample Workspace"
+        _workspaceName.value = "ARNIX-IDE Project"
+
         val mainActivityKt = FileItem(
             id = "file_main_activity",
             name = "MainActivity.kt",
@@ -193,10 +282,47 @@ if __name__ == "__main__":
                 if (found != null) return found
             }
         }
+        // If not in in-memory tree but file exists on physical disk, read it directly
+        val diskFile = File(path)
+        val content = if (context != null) {
+            StorageAccessHelper.readFileRobust(context, path)
+        } else if (diskFile.exists() && !diskFile.isDirectory) {
+            try {
+                diskFile.readText(Charsets.UTF_8)
+            } catch (e: Exception) {
+                ""
+            }
+        } else {
+            ""
+        }
+
+        if (content.isNotBlank() && !content.startsWith("// Cannot read")) {
+            return FileItem(
+                id = path,
+                name = diskFile.name,
+                path = path,
+                isDirectory = false,
+                extension = diskFile.extension,
+                content = content
+            )
+        }
         return null
     }
 
     fun updateFileContent(path: String, newContent: String) {
+        if (context != null) {
+            StorageAccessHelper.writeFileRobust(context, path, newContent)
+        } else {
+            val diskFile = File(path)
+            if (diskFile.exists() && !diskFile.isDirectory) {
+                try {
+                    diskFile.writeText(newContent, Charsets.UTF_8)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
         fun updateInList(items: List<FileItem>): List<FileItem> {
             return items.map { item ->
                 if (item.path == path) {
@@ -213,9 +339,28 @@ if __name__ == "__main__":
 
     fun createFile(parentPath: String, fileName: String, isDirectory: Boolean): FileItem {
         val extension = if (fileName.contains(".")) fileName.substringAfterLast(".") else ""
-        val fullPath = if (parentPath.isEmpty()) fileName else "$parentPath/$fileName"
+        val fullPath = if (parentPath.isEmpty()) {
+            val root = _workspaceRootPath.value
+            if (root != null && root != "Sample Workspace") "$root/$fileName" else fileName
+        } else {
+            "$parentPath/$fileName"
+        }
+
+        val diskFile = File(fullPath)
+        try {
+            if (diskFile.parentFile?.exists() == true) {
+                if (isDirectory) {
+                    diskFile.mkdirs()
+                } else {
+                    diskFile.createNewFile()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         val newItem = FileItem(
-            id = UUID.randomUUID().toString(),
+            id = if (diskFile.isAbsolute) diskFile.absolutePath else UUID.randomUUID().toString(),
             name = fileName,
             path = fullPath,
             isDirectory = isDirectory,
@@ -245,6 +390,15 @@ if __name__ == "__main__":
     }
 
     fun deleteFile(path: String) {
+        val diskFile = File(path)
+        if (diskFile.exists()) {
+            try {
+                diskFile.deleteRecursively()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         fun removeFromList(items: List<FileItem>): List<FileItem> {
             return items.filter { it.path != path }.map { item ->
                 if (item.isDirectory) {

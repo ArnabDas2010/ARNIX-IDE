@@ -8,6 +8,9 @@ import android.os.Environment
 import android.provider.Settings
 import com.arnix.ide.data.model.FileManagerItem
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object StorageAccessHelper {
 
@@ -55,102 +58,104 @@ object StorageAccessHelper {
                normalized.contains("Android/obb", ignoreCase = true)
     }
 
-    fun hasRestrictedPermission(context: Context, path: String): Boolean {
-        val isObb = path.contains("Android/obb", ignoreCase = true)
-        return SafStorageManager.hasPermission(context, isObb)
-    }
-
     fun listFilesRobust(
         context: Context,
         dir: File,
         showHidden: Boolean = true,
         searchQuery: String = ""
     ): List<FileManagerItem> {
-        val path = dir.absolutePath
-        val isRestricted = isRestrictedPath(path)
+        val path = dir.absolutePath.replace("//", "/")
+        val isDataDir = dir.name.equals("data", ignoreCase = true) && dir.parentFile?.name.equals("Android", ignoreCase = true)
+        val isObbDir = dir.name.equals("obb", ignoreCase = true) && dir.parentFile?.name.equals("Android", ignoreCase = true)
 
-        // For Android/data or Android/obb: query Storage Access Framework (SAF)
-        if (isRestricted) {
-            val isObb = path.contains("Android/obb", ignoreCase = true)
-            if (SafStorageManager.hasPermission(context, isObb)) {
-                val safItems = SafStorageManager.listDirectory(context, path, showHidden, searchQuery)
-                if (safItems.isNotEmpty()) {
-                    return safItems
-                }
-            }
-        }
+        val filesSet = LinkedHashSet<File>()
 
         // 1. Try standard Java File.listFiles()
-        var filesList: List<File>? = dir.listFiles()?.toList()
+        dir.listFiles()?.forEach { filesSet.add(it) }
 
-        // 2. Fallback: If null or empty, try dir.list()
-        if (filesList.isNullOrEmpty()) {
-            val names = dir.list()
-            if (names != null && names.isNotEmpty()) {
-                filesList = names.map { File(dir, it) }
-            }
+        // 2. Try dir.list()
+        if (filesSet.isEmpty()) {
+            dir.list()?.forEach { filesSet.add(File(dir, it)) }
         }
 
-        // 3. Fallback: If still null or empty, try shell ls -1A
-        if (filesList.isNullOrEmpty()) {
+        // 3. Try shell ls -1A
+        if (filesSet.isEmpty() || isDataDir || isObbDir) {
             val shellFiles = listViaShell(dir)
-            if (shellFiles.isNotEmpty()) {
-                filesList = shellFiles
-            }
+            shellFiles.forEach { filesSet.add(it) }
         }
 
-        // 4. Ensure standard root directories are always visible if in storage root
-        val normPath = dir.absolutePath.trimEnd('/')
+        // 4. For Android/data: Discover installed package folders just like ZArchiver
+        if (isDataDir) {
+            val packageFiles = getAndroidDataPackages(context, dir)
+            packageFiles.forEach { filesSet.add(it) }
+        }
+
+        // 5. For Android/obb: Discover installed package folders with OBBs
+        if (isObbDir) {
+            val obbFiles = getAndroidObbPackages(context, dir)
+            obbFiles.forEach { filesSet.add(it) }
+        }
+
+        // 6. Guarantee standard root directories are always visible if in storage root
+        val normPath = path.trimEnd('/')
         val extPath = Environment.getExternalStorageDirectory()?.absolutePath?.trimEnd('/') ?: "/storage/emulated/0"
         if (normPath == "/storage/emulated/0" || normPath == extPath || normPath == "/sdcard") {
             val wellKnown = listOf(
                 "Android", "Download", "Documents", "DCIM", "Pictures",
                 "Music", "Movies", "Notifications", "Alarms", "Ringtones", "Podcasts"
             )
-            val currentNames = filesList?.map { it.name.lowercase() }?.toSet() ?: emptySet()
-            val extra = wellKnown.filter { !currentNames.contains(it.lowercase()) }
-                .map { File(dir, it) }
-                .filter { it.exists() || it.isDirectory || File("/storage/emulated/0/$it").exists() }
-            if (extra.isNotEmpty()) {
-                filesList = (filesList ?: emptyList()) + extra
+            val currentNames = filesSet.map { it.name.lowercase() }.toSet()
+            for (name in wellKnown) {
+                if (!currentNames.contains(name.lowercase())) {
+                    val candidate = File(dir, name)
+                    filesSet.add(candidate)
+                }
             }
         }
 
-        // 5. Ensure Android subdirectories are visible if inside /Android
+        // 7. Guarantee Android subdirectories are visible if inside /Android
         if (dir.name.equals("Android", ignoreCase = true)) {
             val androidSubs = listOf("data", "obb", "media")
-            val currentNames = filesList?.map { it.name.lowercase() }?.toSet() ?: emptySet()
-            val extra = androidSubs.filter { !currentNames.contains(it.lowercase()) }
-                .map { File(dir, it) }
-            if (extra.isNotEmpty()) {
-                filesList = (filesList ?: emptyList()) + extra
+            val currentNames = filesSet.map { it.name.lowercase() }.toSet()
+            for (sub in androidSubs) {
+                if (!currentNames.contains(sub.lowercase())) {
+                    filesSet.add(File(dir, sub))
+                }
             }
         }
 
-        if (filesList != null) {
-            return filesList
+        // 8. If SAF tree permission was previously granted, merge any additional items found
+        val isRestricted = isRestrictedPath(path)
+        if (isRestricted) {
+            val isObb = path.contains("Android/obb", ignoreCase = true)
+            if (SafStorageManager.hasPermission(context, isObb)) {
+                val safItems = SafStorageManager.listDirectory(context, path, showHidden, searchQuery)
+                if (safItems.isNotEmpty()) {
+                    val safNames = safItems.map { it.name.lowercase() }.toSet()
+                    val existingFromSaf = filesSet.filter { !safNames.contains(it.name.lowercase()) }
+                    return safItems + existingFromSaf.map { FileManagerItem.fromFile(it) }
+                }
+            }
+        }
+
+        if (filesSet.isNotEmpty()) {
+            return filesSet
                 .filter { showHidden || !it.name.startsWith(".") }
                 .filter { searchQuery.isBlank() || it.name.contains(searchQuery, ignoreCase = true) }
                 .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                 .map { file ->
                     val isAndroidSubdir = file.isDirectory && file.parentFile?.name.equals("Android", ignoreCase = true)
                     if (isAndroidSubdir && file.name.equals("data", ignoreCase = true)) {
-                        val hasPerm = SafStorageManager.hasPermission(context, false)
-                        val count = if (hasPerm) SafStorageManager.getFolderItemCount(context, false) else -1
-                        val sizeStr = if (hasPerm) {
-                            if (count > 0) "$count items" else "Folder"
-                        } else {
-                            "Access required"
-                        }
+                        val count = countFolderItemsQuick(context, file, isData = true, isObb = false)
+                        val sizeStr = if (count > 0) "$count items" else "Empty"
                         FileManagerItem.fromFile(file).copy(sizeFormatted = sizeStr)
                     } else if (isAndroidSubdir && file.name.equals("obb", ignoreCase = true)) {
-                        val hasPerm = SafStorageManager.hasPermission(context, true)
-                        val count = if (hasPerm) SafStorageManager.getFolderItemCount(context, true) else -1
-                        val sizeStr = if (hasPerm) {
-                            if (count > 0) "$count items" else "Folder"
-                        } else {
-                            "Access required"
-                        }
+                        val count = countFolderItemsQuick(context, file, isData = false, isObb = true)
+                        val sizeStr = if (count > 0) "$count items" else "Empty"
+                        FileManagerItem.fromFile(file).copy(sizeFormatted = sizeStr)
+                    } else if (isAndroidSubdir && file.name.equals("media", ignoreCase = true)) {
+                        val count = file.listFiles()?.size ?: 0
+                        val sizeStr = if (count > 0) "$count items" else "Empty"
                         FileManagerItem.fromFile(file).copy(sizeFormatted = sizeStr)
                     } else {
                         FileManagerItem.fromFile(file)
@@ -158,17 +163,97 @@ object StorageAccessHelper {
                 }
         }
 
-        // 6. If standard API returned empty but SAF permission is available, try SAF
-        if (isRestricted && SafStorageManager.hasPermission(context, path.contains("Android/obb", ignoreCase = true))) {
-            return SafStorageManager.listDirectory(context, path, showHidden, searchQuery)
+        return emptyList()
+    }
+
+    private fun getAndroidDataPackages(context: Context, dataDir: File): List<File> {
+        val result = LinkedHashSet<File>()
+
+        // Check installed packages from PackageManager
+        try {
+            val pm = context.packageManager
+            val installedApps = pm.getInstalledApplications(0)
+            for (app in installedApps) {
+                val pkgDir = File(dataDir, app.packageName)
+                if (pkgDir.exists() || pkgDir.isDirectory) {
+                    result.add(pkgDir)
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
         }
 
-        return emptyList()
+        // Also check common packages explicitly
+        val commonPkgs = listOf(
+            "com.android.chrome",
+            "com.google.android.googlequicksearchbox",
+            "ru.zdevs.zarchiver",
+            "com.arnix.ide",
+            "com.google.android.youtube",
+            "com.android.vending",
+            "com.google.android.gms",
+            "com.whatsapp"
+        )
+        for (pkg in commonPkgs) {
+            val pkgDir = File(dataDir, pkg)
+            if (pkgDir.exists() || pkgDir.isDirectory) {
+                result.add(pkgDir)
+            }
+        }
+
+        // If shell can find anything
+        listViaShell(dataDir).forEach { result.add(it) }
+
+        return result.toList()
+    }
+
+    private fun getAndroidObbPackages(context: Context, obbDir: File): List<File> {
+        val result = LinkedHashSet<File>()
+
+        try {
+            val pm = context.packageManager
+            val installedApps = pm.getInstalledApplications(0)
+            for (app in installedApps) {
+                val pkgDir = File(obbDir, app.packageName)
+                if (pkgDir.exists() || pkgDir.isDirectory) {
+                    result.add(pkgDir)
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
+        listViaShell(obbDir).forEach { result.add(it) }
+
+        return result.toList()
+    }
+
+    private fun countFolderItemsQuick(context: Context, dir: File, isData: Boolean, isObb: Boolean): Int {
+        val direct = dir.listFiles()?.size ?: 0
+        if (direct > 0) return direct
+
+        val shell = listViaShell(dir).size
+        if (shell > 0) return shell
+
+        if (isData) {
+            val pkgs = getAndroidDataPackages(context, dir).size
+            if (pkgs > 0) return pkgs
+        } else if (isObb) {
+            val pkgs = getAndroidObbPackages(context, dir).size
+            if (pkgs > 0) return pkgs
+        }
+
+        if (SafStorageManager.hasPermission(context, isObb)) {
+            val safCount = SafStorageManager.getFolderItemCount(context, isObb)
+            if (safCount > 0) return safCount
+        }
+
+        return 0
     }
 
     fun listViaShell(dir: File): List<File> {
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ls -1A \"${dir.absolutePath}\""))
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ls -1A \"${dir.absolutePath}\" 2>/dev/null"))
             val lines = process.inputStream.bufferedReader().readLines()
             process.waitFor()
             lines.filter { it.isNotBlank() }.map { File(dir, it.trim()) }
@@ -177,10 +262,30 @@ object StorageAccessHelper {
         }
     }
 
+    fun runShellCommand(cmd: String): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            process.waitFor() == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun runShellOutput(cmd: String): String {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            val text = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            text
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     fun readFileRobust(context: Context, filePath: String): String {
         val file = File(filePath)
 
-        // Try standard File reading first
+        // 1. Try standard File reading
         if (file.exists() && file.canRead()) {
             try {
                 if (file.length() < 2 * 1024 * 1024) {
@@ -188,11 +293,17 @@ object StorageAccessHelper {
                 }
                 return "// File is too large to display directly (${file.length() / 1024} KB)"
             } catch (e: Exception) {
-                // fall through to SAF
+                // fall through
             }
         }
 
-        // Try SAF reading
+        // 2. Try Shell reading
+        val shellOutput = runShellOutput("cat \"$filePath\" 2>/dev/null")
+        if (shellOutput.isNotEmpty()) {
+            return shellOutput
+        }
+
+        // 3. Try SAF reading if permission exists
         if (isRestrictedPath(filePath)) {
             val safContent = SafStorageManager.readFile(context, filePath)
             if (safContent != null) return safContent
@@ -204,15 +315,25 @@ object StorageAccessHelper {
     fun writeFileRobust(context: Context, filePath: String, content: String): Boolean {
         val file = File(filePath)
 
-        if (file.canWrite() || (!file.exists() && file.parentFile?.canWrite() == true)) {
-            try {
-                file.writeText(content, Charsets.UTF_8)
-                return true
-            } catch (e: Exception) {
-                // fall through to SAF
-            }
+        // 1. Try standard File writing
+        try {
+            file.parentFile?.mkdirs()
+            file.writeText(content, Charsets.UTF_8)
+            return true
+        } catch (e: Exception) {
+            // fall through
         }
 
+        // 2. Try shell writing
+        try {
+            val escaped = content.replace("'", "'\\''")
+            val success = runShellCommand("printf '%s' '$escaped' > \"$filePath\"")
+            if (success && file.exists()) return true
+        } catch (e: Exception) {
+            // fall through
+        }
+
+        // 3. Try SAF writing
         if (isRestrictedPath(filePath)) {
             return SafStorageManager.writeFile(context, filePath, content)
         }
@@ -221,81 +342,122 @@ object StorageAccessHelper {
     }
 
     fun deleteItem(context: Context, path: String): Boolean {
+        val file = File(path)
+
+        // 1. Try standard deletion
+        try {
+            if (file.exists() && file.deleteRecursively()) {
+                return true
+            }
+        } catch (e: Exception) {
+            // fall through
+        }
+
+        // 2. Try shell deletion
+        if (runShellCommand("rm -rf \"$path\"")) {
+            return true
+        }
+
+        // 3. Try SAF deletion
         if (isRestrictedPath(path)) {
             val safResult = SafStorageManager.deleteDocument(context, path)
             if (safResult) return true
         }
-        val file = File(path)
-        return try {
-            if (file.exists()) {
-                file.deleteRecursively()
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            false
-        }
+
+        return false
     }
 
     fun renameItem(context: Context, path: String, newName: String): Boolean {
         if (newName.isBlank()) return false
+        val file = File(path)
+        val target = File(file.parentFile, newName)
+
+        // 1. Try standard rename
+        try {
+            if (file.exists() && file.renameTo(target)) {
+                return true
+            }
+        } catch (e: Exception) {
+            // fall through
+        }
+
+        // 2. Try shell rename
+        if (runShellCommand("mv \"$path\" \"${target.absolutePath}\"")) {
+            return true
+        }
+
+        // 3. Try SAF rename
         if (isRestrictedPath(path)) {
             val safResult = SafStorageManager.renameDocument(context, path, newName)
             if (safResult) return true
         }
-        val file = File(path)
-        return try {
-            if (file.exists()) {
-                val target = File(file.parentFile, newName)
-                file.renameTo(target)
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            false
-        }
+
+        return false
     }
 
     fun createFolder(context: Context, parentPath: String, name: String): Boolean {
         if (name.isBlank()) return false
+        val target = File(parentPath, name)
+
+        // 1. Try standard mkdirs
+        try {
+            if (target.mkdirs()) return true
+        } catch (e: Exception) {
+            // fall through
+        }
+
+        // 2. Try shell mkdir
+        if (runShellCommand("mkdir -p \"${target.absolutePath}\"")) {
+            return true
+        }
+
+        // 3. Try SAF createDirectory
         if (isRestrictedPath(parentPath)) {
             val safResult = SafStorageManager.createDirectory(context, parentPath, name)
             if (safResult) return true
         }
-        val target = File(parentPath, name)
-        return try {
-            target.mkdirs()
-        } catch (e: Exception) {
-            false
-        }
+
+        return false
     }
 
     fun createFile(context: Context, parentPath: String, name: String, content: String = ""): Boolean {
         if (name.isBlank()) return false
-        if (isRestrictedPath(parentPath)) {
-            val safResult = SafStorageManager.createFile(context, parentPath, name, content)
-            if (safResult) return true
-        }
         val target = File(parentPath, name)
-        return try {
+
+        // 1. Try standard file creation
+        try {
             target.parentFile?.mkdirs()
             if (content.isNotEmpty()) {
                 target.writeText(content, Charsets.UTF_8)
             } else {
                 target.createNewFile()
             }
-            true
+            return true
         } catch (e: Exception) {
-            false
+            // fall through
         }
+
+        // 2. Try shell touch
+        if (runShellCommand("touch \"${target.absolutePath}\"")) {
+            if (content.isNotEmpty()) {
+                writeFileRobust(context, target.absolutePath, content)
+            }
+            return true
+        }
+
+        // 3. Try SAF createFile
+        if (isRestrictedPath(parentPath)) {
+            val safResult = SafStorageManager.createFile(context, parentPath, name, content)
+            if (safResult) return true
+        }
+
+        return false
     }
 
     fun copyItem(context: Context, sourcePath: String, destinationDirPath: String): Boolean {
         val srcFile = File(sourcePath)
         val destDir = File(destinationDirPath)
-        if (!destDir.exists() && !isRestrictedPath(destinationDirPath)) {
-            destDir.mkdirs()
-        }
+        destDir.mkdirs()
 
         var targetName = srcFile.name
         var targetFile = File(destDir, targetName)
@@ -310,6 +472,25 @@ object StorageAccessHelper {
             }
         }
 
+        // 1. Try standard copy
+        try {
+            if (srcFile.isDirectory) {
+                srcFile.copyRecursively(targetFile, overwrite = true)
+            } else {
+                srcFile.copyTo(targetFile, overwrite = true)
+            }
+            return true
+        } catch (e: Exception) {
+            // fall through
+        }
+
+        // 2. Try shell copy
+        val shellCmd = if (srcFile.isDirectory) "cp -r \"$sourcePath\" \"${targetFile.absolutePath}\"" else "cp \"$sourcePath\" \"${targetFile.absolutePath}\""
+        if (runShellCommand(shellCmd)) {
+            return true
+        }
+
+        // 3. Try SAF copy
         if (isRestrictedPath(destinationDirPath)) {
             return if (srcFile.isDirectory) {
                 SafStorageManager.createDirectory(context, destinationDirPath, targetName)
@@ -319,30 +500,7 @@ object StorageAccessHelper {
             }
         }
 
-        if (isRestrictedPath(sourcePath)) {
-            return try {
-                if (srcFile.isDirectory) {
-                    targetFile.mkdirs()
-                } else {
-                    val content = SafStorageManager.readFile(context, sourcePath) ?: ""
-                    targetFile.writeText(content, Charsets.UTF_8)
-                }
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-
-        return try {
-            if (srcFile.isDirectory) {
-                srcFile.copyRecursively(targetFile, overwrite = true)
-            } else {
-                srcFile.copyTo(targetFile, overwrite = true)
-            }
-            true
-        } catch (e: Exception) {
-            false
-        }
+        return false
     }
 
     fun moveItem(context: Context, sourcePath: String, destinationDirPath: String): Boolean {

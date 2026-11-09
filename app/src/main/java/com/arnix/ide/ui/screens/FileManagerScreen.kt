@@ -126,15 +126,6 @@ fun FileManagerScreen(
         }
     }
 
-    // Permission request dialog state for Android 11 (ZArchiver style)
-    var showPermissionDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(currentPath, hasSafAccess) {
-        if (isRestricted && !hasSafAccess) {
-            showPermissionDialog = true
-        }
-    }
-
     // Storage Access Framework (SAF) Launcher
     val safLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -147,7 +138,6 @@ fun FileManagerScreen(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
                 SafStorageManager.saveGrantedTree(context, isObb, uri)
-                showPermissionDialog = false
                 refreshKey++
                 Toast.makeText(context, "Access granted to $folderTargetName", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
@@ -273,32 +263,7 @@ fun FileManagerScreen(
                                         letterSpacing = 0.5.sp
                                     )
 
-                                    if (isRestricted) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            color = if (hasSafAccess) IdeSecondary.copy(alpha = 0.2f) else IdeTertiary.copy(alpha = 0.2f),
-                                            shape = RoundedCornerShape(4.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    painter = if (hasSafAccess) painterResource(id = R.drawable.ic_check) else painterResource(id = R.drawable.ic_folder),
-                                                    contentDescription = null,
-                                                    tint = if (hasSafAccess) IdeSecondary else IdeTertiary,
-                                                    modifier = Modifier.size(11.dp)
-                                                )
-                                                Text(
-                                                    text = if (hasSafAccess) "Active" else "Locked",
-                                                    color = if (hasSafAccess) IdeSecondary else IdeTertiary,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
+
                                 }
 
                                 Text(
@@ -751,32 +716,6 @@ fun FileManagerScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Enable All Files Access", fontWeight = FontWeight.Bold)
-                            }
-                        } else if (isRestricted && !hasSafAccess) {
-                            Text(
-                                text = "Permission Required",
-                                color = IdeTextPrimary,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Android 11 restricts direct access to $folderTargetName.\nGrant permission via Storage Access Framework.",
-                                color = IdeTextSecondary,
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Button(
-                                onClick = {
-                                    try {
-                                        safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb))
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Grant Access to $folderTargetName", color = IdeBackground, fontWeight = FontWeight.Bold)
                             }
                         } else {
                             val hiddenCount = remember(currentPath, refreshKey) {
@@ -1257,71 +1196,7 @@ fun FileManagerScreen(
                 )
             }
 
-            // ZArchiver-Style Permission Request Dialog for Android 11
-            if (showPermissionDialog && isRestricted && !hasSafAccess) {
-                AlertDialog(
-                    onDismissRequest = { showPermissionDialog = false },
-                    title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_folder),
-                                contentDescription = null,
-                                tint = IdeSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "Access $folderTargetName",
-                                color = IdeTextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                    },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "To view and manage files in $folderTargetName on Android 11:",
-                                color = IdeTextPrimary,
-                                fontSize = 13.sp
-                            )
-                            Surface(
-                                color = IdeSurfaceVariant,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text("1. Tap 'Grant Access' below.", color = IdeTextSecondary, fontSize = 12.sp)
-                                    Text("2. The system file picker will open.", color = IdeTextSecondary, fontSize = 12.sp)
-                                    Text("3. Tap 'USE THIS FOLDER' at the bottom.", color = IdeSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    Text("4. Tap 'ALLOW' to confirm.", color = IdeSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                try {
-                                    safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb))
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary)
-                        ) {
-                            Text("Grant Access", color = IdeBackground, fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showPermissionDialog = false }) {
-                            Text("Cancel", color = IdeTextMuted)
-                        }
-                    }
-                )
-            }
+
 
             // All Files Access Permission Dialog for Android 11
             if (showAllFilesPermissionDialog && !hasAllFilesAccess) {

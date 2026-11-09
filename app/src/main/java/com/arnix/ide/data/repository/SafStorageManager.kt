@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
+import androidx.documentfile.provider.DocumentFile
 import com.arnix.ide.data.model.FileManagerItem
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -59,6 +60,23 @@ object SafStorageManager {
             getTreeUri(context, isObb) != null
         } catch (e: Exception) {
             false
+        }
+    }
+
+    fun getFolderItemCount(context: Context, isObb: Boolean): Int {
+        return try {
+            val treeUri = getTreeUri(context, isObb) ?: return 0
+            val docId = if (isObb) "primary:Android/obb" else "primary:Android/data"
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+            context.contentResolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null
+            )?.use { it.count } ?: 0
+        } catch (e: Exception) {
+            0
         }
     }
 
@@ -180,7 +198,70 @@ object SafStorageManager {
             e.printStackTrace()
         }
 
+        if (items.isEmpty()) {
+            val docFileItems = listWithDocumentFile(context, treeUri, path, isObb, showHidden, searchQuery)
+            if (docFileItems.isNotEmpty()) {
+                return docFileItems
+            }
+        }
+
         return items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+    }
+
+    fun listWithDocumentFile(
+        context: Context,
+        treeUri: Uri,
+        path: String,
+        isObb: Boolean,
+        showHidden: Boolean,
+        searchQuery: String
+    ): List<FileManagerItem> {
+        return try {
+            val rootDoc = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
+            val targetSegment = if (isObb) "Android/obb" else "Android/data"
+            val idx = path.indexOf(targetSegment, ignoreCase = true)
+            val subPath = if (idx != -1) path.substring(idx + targetSegment.length).trim('/') else ""
+
+            var targetDoc: DocumentFile? = rootDoc
+            if (subPath.isNotEmpty()) {
+                val parts = subPath.split('/')
+                for (part in parts) {
+                    if (part.isNotBlank() && targetDoc != null) {
+                        targetDoc = targetDoc.findFile(part)
+                    }
+                }
+            }
+
+            if (targetDoc == null) return emptyList()
+
+            val files = targetDoc.listFiles()
+            val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+            val normalizedPath = path.trimEnd('/')
+
+            files
+                .filter { it.name != null && it.name!!.isNotEmpty() }
+                .filter { showHidden || !it.name!!.startsWith(".") }
+                .filter { searchQuery.isBlank() || it.name!!.contains(searchQuery, ignoreCase = true) }
+                .sortedWith(compareBy({ !it.isDirectory }, { it.name?.lowercase() ?: "" }))
+                .map { doc ->
+                    val name = doc.name ?: "Unknown"
+                    val isDir = doc.isDirectory
+                    val childPath = "$normalizedPath/$name"
+                    val ext = if (isDir) "" else name.substringAfterLast(".", "")
+                    FileManagerItem(
+                        name = name,
+                        path = childPath,
+                        isDirectory = isDir,
+                        sizeFormatted = if (isDir) "Folder" else formatSize(doc.length()),
+                        lastModifiedFormatted = if (doc.lastModified() > 0) dateFormat.format(Date(doc.lastModified())) else "Recently",
+                        extension = ext,
+                        isHidden = name.startsWith(".")
+                    )
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 
     /**
@@ -217,6 +298,93 @@ object SafStorageManager {
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+    }
+
+    fun deleteDocument(context: Context, path: String): Boolean {
+        val isObb = path.contains("Android/obb", ignoreCase = true)
+        val treeUri = getTreeUri(context, isObb) ?: return false
+        val docId = pathToDocumentId(path, isObb)
+        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        return try {
+            DocumentsContract.deleteDocument(context.contentResolver, docUri)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun renameDocument(context: Context, path: String, newName: String): Boolean {
+        val isObb = path.contains("Android/obb", ignoreCase = true)
+        val treeUri = getTreeUri(context, isObb) ?: return false
+        val docId = pathToDocumentId(path, isObb)
+        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        return try {
+            val renamed = DocumentsContract.renameDocument(context.contentResolver, docUri, newName)
+            renamed != null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun createDirectory(context: Context, parentPath: String, name: String): Boolean {
+        val isObb = parentPath.contains("Android/obb", ignoreCase = true)
+        val treeUri = getTreeUri(context, isObb) ?: return false
+        val parentDocId = pathToDocumentId(parentPath, isObb)
+        val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
+        return try {
+            val created = DocumentsContract.createDocument(
+                context.contentResolver,
+                parentDocUri,
+                DocumentsContract.Document.MIME_TYPE_DIR,
+                name
+            )
+            created != null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun createFile(context: Context, parentPath: String, name: String, content: String = ""): Boolean {
+        val isObb = parentPath.contains("Android/obb", ignoreCase = true)
+        val treeUri = getTreeUri(context, isObb) ?: return false
+        val parentDocId = pathToDocumentId(parentPath, isObb)
+        val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
+        return try {
+            val mimeType = if (name.endsWith(".txt") || name.endsWith(".kt") || name.endsWith(".java") || name.endsWith(".json")) {
+                "text/plain"
+            } else {
+                "application/octet-stream"
+            }
+            val created = DocumentsContract.createDocument(
+                context.contentResolver,
+                parentDocUri,
+                mimeType,
+                name
+            )
+            if (created != null && content.isNotEmpty()) {
+                context.contentResolver.openOutputStream(created, "wt")?.bufferedWriter()?.use {
+                    it.write(content)
+                }
+            }
+            created != null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun getInputStream(context: Context, path: String): java.io.InputStream? {
+        val isObb = path.contains("Android/obb", ignoreCase = true)
+        val treeUri = getTreeUri(context, isObb) ?: return null
+        val docId = pathToDocumentId(path, isObb)
+        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        return try {
+            context.contentResolver.openInputStream(docUri)
+        } catch (e: Exception) {
+            null
         }
     }
 

@@ -54,8 +54,8 @@ fun ArnixMainScreen(
         containerColor = IdeBackground,
         bottomBar = {
             Column {
-                // Show mobile coding symbols keyboard helper when on Editor
-                if (currentScreen == IdeScreen.EDITOR && activeTab != null) {
+                // Show mobile coding symbols keyboard helper only on Editor when file manager is closed
+                if (currentScreen == IdeScreen.EDITOR && !showFileManager && activeTab != null) {
                     QuickSymbolBar(
                         onInsertSymbol = { symbol -> viewModel.insertSymbolAtCursor(symbol) }
                     )
@@ -68,8 +68,11 @@ fun ArnixMainScreen(
                     modifier = Modifier.testTag("bottom_nav_bar")
                 ) {
                     NavigationBarItem(
-                        selected = currentScreen == IdeScreen.EDITOR,
-                        onClick = { viewModel.setScreen(IdeScreen.EDITOR) },
+                        selected = currentScreen == IdeScreen.EDITOR && !showFileManager,
+                        onClick = {
+                            viewModel.closeFileManager()
+                            viewModel.setScreen(IdeScreen.EDITOR)
+                        },
                         icon = {
                             Icon(
                                 painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_file_code),
@@ -77,7 +80,7 @@ fun ArnixMainScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        label = { Text(stringResource(R.string.nav_editor), fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.nav_editor), fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = IdePrimary,
                             selectedTextColor = IdePrimary,
@@ -98,7 +101,7 @@ fun ArnixMainScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        label = { Text(stringResource(R.string.nav_explorer), fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.nav_explorer), fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = IdePrimary,
                             selectedTextColor = IdePrimary,
@@ -110,8 +113,11 @@ fun ArnixMainScreen(
                     )
 
                     NavigationBarItem(
-                        selected = currentScreen == IdeScreen.GIT,
-                        onClick = { viewModel.setScreen(IdeScreen.GIT) },
+                        selected = currentScreen == IdeScreen.GIT && !showFileManager,
+                        onClick = {
+                            viewModel.closeFileManager()
+                            viewModel.setScreen(IdeScreen.GIT)
+                        },
                         icon = {
                             Icon(
                                 painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_git_branch),
@@ -119,7 +125,7 @@ fun ArnixMainScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        label = { Text(stringResource(R.string.nav_git), fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.nav_git), fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = IdePrimary,
                             selectedTextColor = IdePrimary,
@@ -131,8 +137,11 @@ fun ArnixMainScreen(
                     )
 
                     NavigationBarItem(
-                        selected = currentScreen == IdeScreen.TERMINAL,
-                        onClick = { viewModel.setScreen(IdeScreen.TERMINAL) },
+                        selected = currentScreen == IdeScreen.TERMINAL && !showFileManager,
+                        onClick = {
+                            viewModel.closeFileManager()
+                            viewModel.setScreen(IdeScreen.TERMINAL)
+                        },
                         icon = {
                             Icon(
                                 painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_terminal),
@@ -140,7 +149,7 @@ fun ArnixMainScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        label = { Text(stringResource(R.string.nav_terminal), fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.nav_terminal), fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = IdePrimary,
                             selectedTextColor = IdePrimary,
@@ -152,12 +161,15 @@ fun ArnixMainScreen(
                     )
 
                     NavigationBarItem(
-                        selected = currentScreen == IdeScreen.SETTINGS,
-                        onClick = { viewModel.setScreen(IdeScreen.SETTINGS) },
+                        selected = currentScreen == IdeScreen.SETTINGS && !showFileManager,
+                        onClick = {
+                            viewModel.closeFileManager()
+                            viewModel.setScreen(IdeScreen.SETTINGS)
+                        },
                         icon = {
                             Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.nav_settings))
                         },
-                        label = { Text(stringResource(R.string.nav_settings), fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.nav_settings), fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = IdePrimary,
                             selectedTextColor = IdePrimary,
@@ -368,8 +380,8 @@ fun ArnixMainScreen(
                 )
             }
 
-            // In-App Native File Manager Screen (No external apps, double click sets workspace)
-            if (showFileManager) {
+            // In-App Native File Manager Screen (Scoped to Files tab)
+            if (showFileManager && currentScreen == IdeScreen.EXPLORER) {
                 FileManagerScreen(
                     currentPath = fileManagerPath,
                     onNavigateTo = { viewModel.navigateFileManagerTo(it) },

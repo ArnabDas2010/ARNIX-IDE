@@ -1,17 +1,22 @@
 package com.arnix.ide.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -35,6 +40,22 @@ import com.arnix.ide.data.repository.StorageAccessHelper
 import com.arnix.ide.ui.theme.*
 import java.io.File
 
+data class StorageShortcutDestination(
+    val title: String,
+    val subtitle: String,
+    val path: String,
+    val iconRes: Int
+)
+
+data class ActiveClipboardItem(
+    val item: FileManagerItem,
+    val isCut: Boolean
+)
+
+enum class FileCategoryFilter {
+    ALL, FOLDERS, FILES
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileManagerScreen(
@@ -47,13 +68,31 @@ fun FileManagerScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var showHidden by remember { mutableStateOf(false) }
+    var showHidden by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
-    var showDirectPathDialog by remember { mutableStateOf(false) }
-    var directPathInput by remember { mutableStateOf(currentPath) }
+    var isSearchActive by remember { mutableStateOf(false) }
+    var activeCategory by remember { mutableStateOf(FileCategoryFilter.ALL) }
 
-    // Refresh trigger after granting permission
+    var showLocationPickerDialog by remember { mutableStateOf(false) }
+    var customPathInput by remember { mutableStateOf(currentPath) }
+
+    // Refresh trigger after creating, deleting, renaming, pasting, or granting permission
     var refreshKey by remember { mutableIntStateOf(0) }
+
+    // In-App Clipboard for Copy / Cut / Paste
+    var clipboardItem by remember { mutableStateOf<ActiveClipboardItem?>(null) }
+
+    // Dialog states
+    var itemToDelete by remember { mutableStateOf<FileManagerItem?>(null) }
+    var itemToRename by remember { mutableStateOf<FileManagerItem?>(null) }
+    var renameInput by remember { mutableStateOf("") }
+    var itemForDetails by remember { mutableStateOf<FileManagerItem?>(null) }
+
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var createIsFolder by remember { mutableStateOf(false) }
+    var createNameInput by remember { mutableStateOf("") }
+
+    var showNewMenu by remember { mutableStateOf(false) }
 
     // Double-click tracker for folders
     var lastClickedFolderPath by remember { mutableStateOf<String?>(null) }
@@ -68,10 +107,28 @@ fun FileManagerScreen(
         if (!isRestricted) true else SafStorageManager.hasPermission(context, isObb)
     }
 
+    val hasAllFilesAccess = remember(refreshKey) {
+        StorageAccessHelper.hasAllFilesPermission(context)
+    }
+    var showAllFilesPermissionDialog by remember { mutableStateOf(!hasAllFilesAccess) }
+
+    // Auto-refresh when user returns to app from system settings
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                refreshKey++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     // Permission request dialog state for Android 11 (ZArchiver style)
     var showPermissionDialog by remember { mutableStateOf(false) }
 
-    // Auto-prompt dialog if entering restricted folder without permission
     LaunchedEffect(currentPath, hasSafAccess) {
         if (isRestricted && !hasSafAccess) {
             showPermissionDialog = true
@@ -92,6 +149,7 @@ fun FileManagerScreen(
                 SafStorageManager.saveGrantedTree(context, isObb, uri)
                 showPermissionDialog = false
                 refreshKey++
+                Toast.makeText(context, "Access granted to $folderTargetName", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -100,6 +158,17 @@ fun FileManagerScreen(
 
     val fileList = remember(currentPath, showHidden, searchQuery, refreshKey) {
         StorageAccessHelper.listFilesRobust(context, currentDir, showHidden, searchQuery)
+    }
+
+    val folderCount = remember(fileList) { fileList.count { it.isDirectory } }
+    val fileCount = remember(fileList) { fileList.count { !it.isDirectory } }
+
+    val filteredList = remember(fileList, activeCategory) {
+        when (activeCategory) {
+            FileCategoryFilter.ALL -> fileList
+            FileCategoryFilter.FOLDERS -> fileList.filter { it.isDirectory }
+            FileCategoryFilter.FILES -> fileList.filter { !it.isDirectory }
+        }
     }
 
     val canGoUp = currentDir.parentFile != null && currentDir.parentFile?.canRead() == true
@@ -112,8 +181,49 @@ fun FileManagerScreen(
         }
     }
 
-    val developerShortcuts = remember {
-        StorageAccessHelper.getDeveloperStorageShortcuts()
+    val baseStorage = remember {
+        android.os.Environment.getExternalStorageDirectory()?.absolutePath ?: "/storage/emulated/0"
+    }
+
+    val verticalShortcuts = remember(baseStorage) {
+        listOf(
+            StorageShortcutDestination(
+                title = "Android Data",
+                subtitle = "$baseStorage/Android/data",
+                path = "$baseStorage/Android/data",
+                iconRes = R.drawable.ic_android
+            ),
+            StorageShortcutDestination(
+                title = "Android OBB",
+                subtitle = "$baseStorage/Android/obb",
+                path = "$baseStorage/Android/obb",
+                iconRes = R.drawable.ic_android
+            ),
+            StorageShortcutDestination(
+                title = "Android Media",
+                subtitle = "$baseStorage/Android/media",
+                path = "$baseStorage/Android/media",
+                iconRes = R.drawable.ic_android
+            ),
+            StorageShortcutDestination(
+                title = "Internal Storage",
+                subtitle = baseStorage,
+                path = baseStorage,
+                iconRes = R.drawable.ic_storage
+            ),
+            StorageShortcutDestination(
+                title = "Downloads",
+                subtitle = "$baseStorage/Download",
+                path = "$baseStorage/Download",
+                iconRes = R.drawable.ic_download
+            ),
+            StorageShortcutDestination(
+                title = "Documents",
+                subtitle = "$baseStorage/Documents",
+                path = "$baseStorage/Documents",
+                iconRes = R.drawable.ic_document
+            )
+        )
     }
 
     Scaffold(
@@ -125,79 +235,183 @@ fun FileManagerScreen(
             Surface(
                 color = IdeSurface,
                 tonalElevation = 4.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder)
+                border = BorderStroke(1.dp, IdeBorder)
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    // Header Bar
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                    // Header Bar 1: Back + Title/Status + New + Refresh + Use Folder
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             IconButton(
                                 onClick = onClose,
-                                modifier = Modifier.size(36.dp).testTag("btn_close_file_manager")
+                                modifier = Modifier.size(34.dp).testTag("btn_close_file_manager")
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = "Close File Manager",
-                                    tint = IdeTextPrimary
+                                    tint = IdeTextPrimary,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
 
                             Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "FILE MANAGER",
+                                        color = IdeTextPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp
+                                    )
+
+                                    if (isRestricted) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = if (hasSafAccess) IdeSecondary.copy(alpha = 0.2f) else IdeTertiary.copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    painter = if (hasSafAccess) painterResource(id = R.drawable.ic_check) else painterResource(id = R.drawable.ic_folder),
+                                                    contentDescription = null,
+                                                    tint = if (hasSafAccess) IdeSecondary else IdeTertiary,
+                                                    modifier = Modifier.size(11.dp)
+                                                )
+                                                Text(
+                                                    text = if (hasSafAccess) "Active" else "Locked",
+                                                    color = if (hasSafAccess) IdeSecondary else IdeTertiary,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
                                 Text(
-                                    text = "ARNIX STORAGE EXPLORER",
-                                    color = IdeTextPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp
-                                )
-                                Text(
-                                    text = if (isRestricted) "Accessing $folderTargetName" else "Native File Manager",
-                                    color = if (isRestricted) IdeSecondary else IdeTextSecondary,
-                                    fontSize = 11.sp
+                                    text = "$folderCount folders, $fileCount files",
+                                    color = IdeTextMuted,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
 
-                        // Open Current Folder as Workspace Button
-                        Button(
-                            onClick = { onSelectWorkspaceFolder(currentDir.absolutePath) },
-                            colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("btn_select_current_workspace")
+                        // Action Buttons: + New, Refresh, Use Folder
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_folder_open),
-                                contentDescription = null,
-                                tint = IdeBackground,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Use Folder",
-                                color = IdeBackground,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
+                            // + New Button
+                            Box {
+                                IconButton(
+                                    onClick = { showNewMenu = true },
+                                    modifier = Modifier.size(32.dp).testTag("btn_file_manager_new")
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_new_file),
+                                        contentDescription = "Create New",
+                                        tint = IdePrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showNewMenu,
+                                    onDismissRequest = { showNewMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("New File") },
+                                        leadingIcon = {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_new_file),
+                                                contentDescription = null,
+                                                tint = IdePrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            showNewMenu = false
+                                            createIsFolder = false
+                                            createNameInput = ""
+                                            showCreateDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("New Folder") },
+                                        leadingIcon = {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_new_folder),
+                                                contentDescription = null,
+                                                tint = IdeSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            showNewMenu = false
+                                            createIsFolder = true
+                                            createNameInput = ""
+                                            showCreateDialog = true
+                                        }
+                                    )
+                                }
+                            }
+
+                            // Refresh Button
+                            IconButton(
+                                onClick = { refreshKey++ },
+                                modifier = Modifier.size(32.dp).testTag("btn_file_manager_refresh")
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_refresh),
+                                    contentDescription = "Refresh",
+                                    tint = IdeTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            // Use Folder Button (Set as IDE Workspace)
+                            Button(
+                                onClick = { onSelectWorkspaceFolder(currentDir.absolutePath) },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(30.dp).testTag("btn_select_current_workspace")
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_folder_open),
+                                    contentDescription = null,
+                                    tint = IdeBackground,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Workspace",
+                                    color = IdeBackground,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
                         }
                     }
 
-                    // Path Bar & Navigation
+                    // Header Bar 2: Path Navigation + Search Toggle + Hidden Toggle
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(IdeSurfaceVariant)
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
@@ -208,22 +422,22 @@ fun FileManagerScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowUp,
-                                contentDescription = "Go to Parent Folder",
+                                contentDescription = "Go Up",
                                 tint = if (canGoUp) IdePrimary else IdeTextMuted,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Interactive Path Display
+                        // Clickable Path Field: tapping opens vertical shortcut selector!
                         Surface(
                             color = IdeBackground,
-                            shape = RoundedCornerShape(6.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, IdeBorder),
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable {
-                                    directPathInput = currentDir.absolutePath
-                                    showDirectPathDialog = true
+                                    customPathInput = currentDir.absolutePath
+                                    showLocationPickerDialog = true
                                 }
                         ) {
                             Row(
@@ -231,6 +445,15 @@ fun FileManagerScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_folder),
+                                    contentDescription = null,
+                                    tint = IdeSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+
+                                Spacer(modifier = Modifier.width(6.dp))
+
                                 Text(
                                     text = currentDir.absolutePath,
                                     color = IdeTextPrimary,
@@ -240,15 +463,33 @@ fun FileManagerScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f)
                                 )
+
                                 Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Path",
-                                    tint = IdeTextMuted,
-                                    modifier = Modifier.size(14.dp)
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Location",
+                                    tint = IdePrimary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
 
+                        // Search Toggle
+                        IconButton(
+                            onClick = {
+                                isSearchActive = !isSearchActive
+                                if (!isSearchActive) searchQuery = ""
+                            },
+                            modifier = Modifier.size(32.dp).testTag("btn_toggle_search")
+                        ) {
+                            Icon(
+                                imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = "Search Files",
+                                tint = if (isSearchActive || searchQuery.isNotEmpty()) IdePrimary else IdeTextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Hidden files toggle button
                         IconButton(
                             onClick = { showHidden = !showHidden },
                             modifier = Modifier.size(32.dp).testTag("btn_toggle_hidden_files")
@@ -256,58 +497,87 @@ fun FileManagerScreen(
                             Text(
                                 text = if (showHidden) ".*" else ".#",
                                 color = if (showHidden) IdeSecondary else IdeTextMuted,
-                                fontSize = 13.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace
                             )
                         }
                     }
 
-                    // Shortcuts Row (Android/data, Android/obb, Root, Downloads)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(IdeSurface)
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        developerShortcuts.forEach { (label, path, _) ->
-                            val isSelected = currentPath == path
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { onNavigateTo(path) },
-                                label = {
-                                    Text(
-                                        text = label,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (label.contains("data") || label.contains("obb")) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = if (label.contains("data")) IdeSecondary.copy(alpha = 0.25f) else IdePrimaryContainer.copy(alpha = 0.3f),
-                                    selectedLabelColor = if (label.contains("data")) IdeSecondary else IdePrimary,
-                                    containerColor = IdeSurfaceVariant,
-                                    labelColor = IdeTextPrimary
+                    // Optional Search Input Row
+                    if (isSearchActive) {
+                        Surface(
+                            color = IdeBackground,
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, IdeBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = IdeTextMuted,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                            )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                OutlinedTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    placeholder = { Text("Filter files & folders in current path...", fontSize = 11.sp, color = IdeTextMuted) },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                                    textStyle = LocalTextStyle.current.copy(fontSize = 11.sp, color = IdeTextPrimary)
+                                )
+                            }
                         }
                     }
 
-                    // Status Banner when in Android/data or Android/obb
-                    if (isRestricted) {
+                    // Category Filter Chips: All | Folders | Files
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = activeCategory == FileCategoryFilter.ALL,
+                            onClick = { activeCategory = FileCategoryFilter.ALL },
+                            label = { Text("All (${fileList.size})", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(26.dp)
+                        )
+                        FilterChip(
+                            selected = activeCategory == FileCategoryFilter.FOLDERS,
+                            onClick = { activeCategory = FileCategoryFilter.FOLDERS },
+                            label = { Text("Folders ($folderCount)", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(26.dp)
+                        )
+                        FilterChip(
+                            selected = activeCategory == FileCategoryFilter.FILES,
+                            onClick = { activeCategory = FileCategoryFilter.FILES },
+                            label = { Text("Files ($fileCount)", fontSize = 11.sp) },
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(26.dp)
+                        )
+                    }
+
+                    if (!hasAllFilesAccess) {
                         Surface(
-                            color = if (hasSafAccess) IdeSurfaceVariant else IdeSecondary.copy(alpha = 0.15f),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (hasSafAccess) IdeBorder else IdeSecondary.copy(alpha = 0.5f)
-                            ),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            color = IdeTertiary.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, IdeTertiary.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -317,35 +587,116 @@ fun FileManagerScreen(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Icon(
-                                        imageVector = if (hasSafAccess) Icons.Default.CheckCircle else Icons.Default.Info,
+                                        painter = painterResource(id = R.drawable.ic_info),
                                         contentDescription = null,
-                                        tint = if (hasSafAccess) IdeSecondary else IdeSecondary,
+                                        tint = IdeTertiary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Text(
-                                        text = if (hasSafAccess) "$folderTargetName Access Active" else "$folderTargetName Permission Required",
+                                        text = "All Files Access required on Android 11",
                                         color = IdeTextPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontSize = 11.sp
                                     )
                                 }
-
-                                if (!hasSafAccess) {
-                                    Button(
-                                        onClick = {
-                                            try {
-                                                safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb))
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        shape = RoundedCornerShape(4.dp)
-                                    ) {
-                                        Text("Grant Permission", color = IdeBackground, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                Button(
+                                    onClick = { StorageAccessHelper.requestAllFilesPermission(context) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = IdeTertiary),
+                                    shape = RoundedCornerShape(4.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text("Grant", color = IdeBackground, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            // Sticky Clipboard Bar for Paste Operation
+            if (clipboardItem != null) {
+                Surface(
+                    color = IdeSurface,
+                    tonalElevation = 6.dp,
+                    border = BorderStroke(1.dp, IdePrimary.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                painter = if (clipboardItem!!.isCut) painterResource(id = R.drawable.ic_cut) else painterResource(id = R.drawable.ic_copy),
+                                contentDescription = null,
+                                tint = IdePrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = if (clipboardItem!!.isCut) "Moving: ${clipboardItem!!.item.name}" else "Copied: ${clipboardItem!!.item.name}",
+                                    color = IdeTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Target: ${currentDir.name}",
+                                    color = IdeTextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            // Paste Button
+                            Button(
+                                onClick = {
+                                    val item = clipboardItem!!.item
+                                    val isCut = clipboardItem!!.isCut
+                                    val success = if (isCut) {
+                                        StorageAccessHelper.moveItem(context, item.path, currentDir.absolutePath)
+                                    } else {
+                                        StorageAccessHelper.copyItem(context, item.path, currentDir.absolutePath)
+                                    }
+                                    if (success) {
+                                        Toast.makeText(context, if (isCut) "Moved successfully" else "Copied successfully", Toast.LENGTH_SHORT).show()
+                                        refreshKey++
+                                        if (isCut) clipboardItem = null
+                                    } else {
+                                        Toast.makeText(context, "Failed to paste item", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimary),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_paste),
+                                    contentDescription = null,
+                                    tint = IdeBackground,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Paste Here", color = IdeBackground, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            // Cancel Button
+                            TextButton(
+                                onClick = { clipboardItem = null },
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Text("Cancel", color = IdeTextMuted, fontSize = 11.sp)
                             }
                         }
                     }
@@ -359,37 +710,61 @@ fun FileManagerScreen(
                 .padding(innerPadding)
                 .background(IdeBackground)
         ) {
-            if (fileList.isEmpty()) {
+            if (filteredList.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize().padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_folder_open),
                             contentDescription = null,
                             tint = if (isRestricted && !hasSafAccess) IdeSecondary else IdeTextMuted,
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Text(
-                            text = if (isRestricted && !hasSafAccess) "Permission Required for $folderTargetName" else "Folder is Empty",
-                            color = IdeTextPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            modifier = Modifier.size(50.dp)
                         )
 
-                        if (isRestricted && !hasSafAccess) {
+                        if (!hasAllFilesAccess) {
                             Text(
-                                text = "On Android 11, tap below to grant folder permission, then click 'USE THIS FOLDER' on the next screen (same as ZArchiver).",
+                                text = "All Files Access Required",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "On Android 11, All Files Access permission is required to view and manage files in root storage and subfolders.\nTap below to enable it in Settings.",
                                 color = IdeTextSecondary,
                                 fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                                textAlign = TextAlign.Center
                             )
-
+                            Button(
+                                onClick = { StorageAccessHelper.requestAllFilesPermission(context) },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimary),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_storage),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Enable All Files Access", fontWeight = FontWeight.Bold)
+                            }
+                        } else if (isRestricted && !hasSafAccess) {
+                            Text(
+                                text = "Permission Required",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Android 11 restricts direct access to $folderTargetName.\nGrant permission via Storage Access Framework.",
+                                color = IdeTextSecondary,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
                             Button(
                                 onClick = {
                                     try {
@@ -399,31 +774,46 @@ fun FileManagerScreen(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.padding(top = 8.dp)
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Grant Access to $folderTargetName", color = IdeBackground, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            val hiddenCount = remember(currentPath, refreshKey) {
+                                StorageAccessHelper.listFilesRobust(context, currentDir, showHidden = true).count { it.isHidden }
+                            }
+
+                            Text(
+                                text = if (searchQuery.isNotEmpty()) "No matching files found" else "This folder is empty",
+                                color = IdeTextSecondary,
+                                fontSize = 14.sp
+                            )
+
+                            if (hiddenCount > 0 && !showHidden) {
+                                OutlinedButton(
+                                    onClick = { showHidden = true },
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("Show $hiddenCount hidden items", color = IdeSecondary, fontSize = 12.sp)
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    createIsFolder = false
+                                    createNameInput = ""
+                                    showCreateDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimaryContainer)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Lock,
+                                    painter = painterResource(id = R.drawable.ic_new_file),
                                     contentDescription = null,
-                                    tint = IdeBackground,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Grant $folderTargetName Access",
-                                    color = IdeBackground,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
+                                Text("Create New File", color = IdePrimary)
                             }
-                        } else {
-                            Text(
-                                text = currentDir.absolutePath,
-                                color = IdeTextSecondary,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                textAlign = TextAlign.Center
-                            )
                         }
                     }
                 }
@@ -431,16 +821,16 @@ fun FileManagerScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(8.dp),
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(fileList, key = { it.path }) { item ->
+                    items(filteredList, key = { it.path }) { item ->
                         FileManagerRowItem(
                             item = item,
                             onFolderClick = {
                                 val now = System.currentTimeMillis()
                                 if (lastClickedFolderPath == item.path && now - lastClickTimestamp < 500) {
-                                    // DOUBLE CLICK: Open directly as IDE Workspace!
+                                    // Double-click: Set folder directly as IDE Workspace!
                                     onSelectWorkspaceFolder(item.path)
                                 } else {
                                     lastClickedFolderPath = item.path
@@ -449,10 +839,422 @@ fun FileManagerScreen(
                                 }
                             },
                             onSelectAsWorkspace = { onSelectWorkspaceFolder(item.path) },
-                            onFileClick = { onOpenFileInEditor(File(item.path)) }
+                            onFileClick = {
+                                // Open file directly into Code Editor tab WITHOUT changing workspace!
+                                onOpenFileInEditor(File(item.path))
+                            },
+                            onCopy = {
+                                clipboardItem = ActiveClipboardItem(item = item, isCut = false)
+                                Toast.makeText(context, "Copied: ${item.name}", Toast.LENGTH_SHORT).show()
+                            },
+                            onCut = {
+                                clipboardItem = ActiveClipboardItem(item = item, isCut = true)
+                                Toast.makeText(context, "Cut: ${item.name}", Toast.LENGTH_SHORT).show()
+                            },
+                            onRename = {
+                                itemToRename = item
+                                renameInput = item.name
+                            },
+                            onDelete = {
+                                itemToDelete = item
+                            },
+                            onDetails = {
+                                itemForDetails = item
+                            }
                         )
                     }
                 }
+            }
+
+            // Create New File / Folder Dialog
+            if (showCreateDialog) {
+                AlertDialog(
+                    onDismissRequest = { showCreateDialog = false },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = if (createIsFolder) painterResource(id = R.drawable.ic_new_folder) else painterResource(id = R.drawable.ic_new_file),
+                                contentDescription = null,
+                                tint = if (createIsFolder) IdeSecondary else IdePrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = if (createIsFolder) "Create New Folder" else "Create New File",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = "Location: ${currentDir.absolutePath}",
+                                color = IdeTextSecondary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            OutlinedTextField(
+                                value = createNameInput,
+                                onValueChange = { createNameInput = it },
+                                placeholder = {
+                                    Text(
+                                        if (createIsFolder) "Folder name" else "File name (e.g. index.kt, note.txt)",
+                                        color = IdeTextMuted,
+                                        fontSize = 12.sp
+                                    )
+                                },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (createNameInput.isNotBlank()) {
+                                    val name = createNameInput.trim()
+                                    val success = if (createIsFolder) {
+                                        StorageAccessHelper.createFolder(context, currentDir.absolutePath, name)
+                                    } else {
+                                        StorageAccessHelper.createFile(context, currentDir.absolutePath, name, "")
+                                    }
+                                    if (success) {
+                                        Toast.makeText(context, if (createIsFolder) "Folder created" else "File created", Toast.LENGTH_SHORT).show()
+                                        refreshKey++
+                                        showCreateDialog = false
+                                        if (!createIsFolder) {
+                                            // Optionally open created file immediately in Editor
+                                            onOpenFileInEditor(File(currentDir, name))
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "Failed to create", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = IdePrimary)
+                        ) {
+                            Text("Create")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCreateDialog = false }) {
+                            Text("Cancel", color = IdeTextMuted)
+                        }
+                    }
+                )
+            }
+
+            // Rename Dialog
+            if (itemToRename != null) {
+                AlertDialog(
+                    onDismissRequest = { itemToRename = null },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_rename),
+                                contentDescription = null,
+                                tint = IdePrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Rename Item",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Current: ${itemToRename!!.name}",
+                                color = IdeTextSecondary,
+                                fontSize = 12.sp
+                            )
+                            OutlinedTextField(
+                                value = renameInput,
+                                onValueChange = { renameInput = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (renameInput.isNotBlank()) {
+                                    val success = StorageAccessHelper.renameItem(context, itemToRename!!.path, renameInput.trim())
+                                    if (success) {
+                                        Toast.makeText(context, "Renamed successfully", Toast.LENGTH_SHORT).show()
+                                        refreshKey++
+                                        itemToRename = null
+                                    } else {
+                                        Toast.makeText(context, "Failed to rename", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = IdePrimary)
+                        ) {
+                            Text("Rename")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { itemToRename = null }) {
+                            Text("Cancel", color = IdeTextMuted)
+                        }
+                    }
+                )
+            }
+
+            // Delete Confirmation Dialog
+            if (itemToDelete != null) {
+                AlertDialog(
+                    onDismissRequest = { itemToDelete = null },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_delete),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = if (itemToDelete!!.isDirectory) "Delete Folder?" else "Delete File?",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Text(
+                            text = "Are you sure you want to permanently delete \"${itemToDelete!!.name}\"? This cannot be undone.",
+                            color = IdeTextSecondary,
+                            fontSize = 13.sp
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val success = StorageAccessHelper.deleteItem(context, itemToDelete!!.path)
+                                if (success) {
+                                    Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
+                                    refreshKey++
+                                    itemToDelete = null
+                                } else {
+                                    Toast.makeText(context, "Failed to delete item", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Delete", color = MaterialTheme.colorScheme.onError, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { itemToDelete = null }) {
+                            Text("Cancel", color = IdeTextMuted)
+                        }
+                    }
+                )
+            }
+
+            // Item Details Dialog
+            if (itemForDetails != null) {
+                val item = itemForDetails!!
+                AlertDialog(
+                    onDismissRequest = { itemForDetails = null },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_info),
+                                contentDescription = null,
+                                tint = IdePrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Item Details",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        ) {
+                            DetailRow("Name", item.name)
+                            DetailRow("Type", if (item.isDirectory) "Directory / Folder" else "${item.extension.uppercase().ifEmpty { "Generic" }} File")
+                            DetailRow("Size", item.sizeFormatted)
+                            DetailRow("Modified", item.lastModifiedFormatted)
+                            DetailRow("Full Path", item.path)
+
+                            Button(
+                                onClick = {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("path", item.path))
+                                    Toast.makeText(context, "Path copied to clipboard", Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimaryContainer),
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_copy),
+                                    contentDescription = null,
+                                    tint = IdePrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Copy Full Path", color = IdePrimary, fontSize = 12.sp)
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = { itemForDetails = null }) {
+                            Text("Close")
+                        }
+                    }
+                )
+            }
+
+            // Vertical Location Picker Dialog (Ak ke niche ak vertically stacked list on click)
+            if (showLocationPickerDialog) {
+                AlertDialog(
+                    onDismissRequest = { showLocationPickerDialog = false },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_storage),
+                                contentDescription = null,
+                                tint = IdePrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "Select Storage Location",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            verticalShortcuts.forEach { destination ->
+                                val isSelected = currentPath == destination.path
+                                Surface(
+                                    color = if (isSelected) IdePrimaryContainer.copy(alpha = 0.35f) else IdeSurfaceVariant,
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = if (isSelected) BorderStroke(1.dp, IdePrimary) else BorderStroke(1.dp, IdeBorder.copy(alpha = 0.5f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onNavigateTo(destination.path)
+                                            showLocationPickerDialog = false
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = destination.iconRes),
+                                            contentDescription = null,
+                                            tint = if (isSelected) IdePrimary else IdeSecondary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = destination.title,
+                                                color = IdeTextPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = destination.subtitle,
+                                                color = IdeTextSecondary,
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        if (isSelected) {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_check),
+                                                contentDescription = null,
+                                                tint = IdeSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(color = IdeBorder)
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = "Or enter custom path:",
+                                color = IdeTextSecondary,
+                                fontSize = 11.sp
+                            )
+                            OutlinedTextField(
+                                value = customPathInput,
+                                onValueChange = { customPathInput = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (customPathInput.isNotBlank()) {
+                                    onNavigateTo(customPathInput.trim())
+                                    showLocationPickerDialog = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = IdePrimary)
+                        ) {
+                            Text("Go")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showLocationPickerDialog = false }) {
+                            Text("Close", color = IdeTextMuted)
+                        }
+                    }
+                )
             }
 
             // ZArchiver-Style Permission Request Dialog for Android 11
@@ -521,42 +1323,63 @@ fun FileManagerScreen(
                 )
             }
 
-            // Direct Path Jump Dialog Modal
-            if (showDirectPathDialog) {
+            // All Files Access Permission Dialog for Android 11
+            if (showAllFilesPermissionDialog && !hasAllFilesAccess) {
                 AlertDialog(
-                    onDismissRequest = { showDirectPathDialog = false },
-                    title = { Text("Jump to Directory Path", color = IdeTextPrimary) },
+                    onDismissRequest = { showAllFilesPermissionDialog = false },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_storage),
+                                contentDescription = null,
+                                tint = IdePrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "All Files Access Required",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                text = "Enter directory path (e.g. /storage/emulated/0/Android/data):",
+                                text = "Android 11 restricts reading device folders without All Files Access. To see all your files and folders inside root storage, please grant permission:",
                                 color = IdeTextSecondary,
-                                fontSize = 12.sp
+                                fontSize = 13.sp
                             )
-                            OutlinedTextField(
-                                value = directPathInput,
-                                onValueChange = { directPathInput = it },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                            )
+                            Surface(
+                                color = IdeSurfaceVariant,
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("1. Tap 'Grant Access' below.", color = IdeTextSecondary, fontSize = 12.sp)
+                                    Text("2. Turn ON 'Allow access to manage all files'.", color = IdeSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("3. Return to ARNIX IDE.", color = IdeTextSecondary, fontSize = 12.sp)
+                                }
+                            }
                         }
                     },
                     confirmButton = {
                         Button(
                             onClick = {
-                                if (directPathInput.isNotBlank()) {
-                                    onNavigateTo(directPathInput.trim())
-                                    showDirectPathDialog = false
-                                }
-                            }
+                                StorageAccessHelper.requestAllFilesPermission(context)
+                                showAllFilesPermissionDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = IdePrimary)
                         ) {
-                            Text("Navigate")
+                            Text("Grant Access", color = IdeBackground, fontWeight = FontWeight.Bold)
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showDirectPathDialog = false }) {
-                            Text("Cancel")
+                        TextButton(onClick = { showAllFilesPermissionDialog = false }) {
+                            Text("Later", color = IdeTextMuted)
                         }
                     }
                 )
@@ -571,12 +1394,19 @@ fun FileManagerRowItem(
     onFolderClick: () -> Unit,
     onSelectAsWorkspace: () -> Unit,
     onFileClick: () -> Unit,
+    onCopy: () -> Unit,
+    onCut: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Surface(
         color = IdeSurface,
         shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder.copy(alpha = 0.6f)),
+        border = BorderStroke(1.dp, IdeBorder.copy(alpha = 0.6f)),
         modifier = modifier
             .fillMaxWidth()
             .clickable {
@@ -586,46 +1416,86 @@ fun FileManagerRowItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
+                // Item Icon based on type
+                val iconRes = remember(item.isDirectory, item.extension) {
+                    when {
+                        item.isDirectory -> R.drawable.ic_folder
+                        isCodeExtension(item.extension) -> R.drawable.ic_file_code
+                        isArchiveExtension(item.extension) -> R.drawable.ic_archive
+                        isImageExtension(item.extension) -> R.drawable.ic_image
+                        else -> R.drawable.ic_document
+                    }
+                }
+
+                val iconTint = remember(item.isDirectory, item.extension) {
+                    when {
+                        item.isDirectory -> IdeSecondary
+                        isCodeExtension(item.extension) -> IdePrimary
+                        isArchiveExtension(item.extension) -> IdeTertiary
+                        isImageExtension(item.extension) -> IdeSecondary
+                        else -> IdeTextSecondary
+                    }
+                }
+
                 Icon(
-                    painter = if (item.isDirectory) {
-                        painterResource(id = R.drawable.ic_folder)
-                    } else {
-                        painterResource(id = R.drawable.ic_file_code)
-                    },
+                    painter = painterResource(id = iconRes),
                     contentDescription = null,
-                    tint = if (item.isDirectory) IdeSecondary else IdePrimary,
+                    tint = iconTint,
                     modifier = Modifier.size(24.dp)
                 )
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
                             text = item.name,
                             color = IdeTextPrimary,
                             fontSize = 13.sp,
                             fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
+
+                        if (!item.isDirectory && item.extension.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Surface(
+                                color = IdePrimaryContainer.copy(alpha = 0.3f),
+                                shape = RoundedCornerShape(3.dp)
+                            ) {
+                                Text(
+                                    text = item.extension.uppercase(),
+                                    color = IdePrimary,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+
                         if (item.isHidden) {
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Surface(
                                 color = IdeSurfaceVariant,
-                                shape = RoundedCornerShape(4.dp)
+                                shape = RoundedCornerShape(3.dp)
                             ) {
                                 Text(
                                     text = "hidden",
                                     color = IdeTextMuted,
-                                    fontSize = 9.sp,
+                                    fontSize = 8.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
@@ -633,41 +1503,227 @@ fun FileManagerRowItem(
                     }
 
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = item.sizeFormatted,
-                            color = IdeTextMuted,
-                            fontSize = 11.sp
+                            color = if (item.sizeFormatted.contains("Access required")) IdeTertiary else IdeTextMuted,
+                            fontSize = 10.sp
                         )
                         Text(
-                            text = "•",
+                            text = "|",
                             color = IdeTextMuted,
-                            fontSize = 10.sp
+                            fontSize = 9.sp
                         )
                         Text(
                             text = item.lastModifiedFormatted,
                             color = IdeTextMuted,
-                            fontSize = 11.sp
+                            fontSize = 10.sp
                         )
                     }
                 }
             }
 
-            if (item.isDirectory) {
-                IconButton(
-                    onClick = onSelectAsWorkspace,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_folder_open),
-                        contentDescription = "Set as Workspace",
-                        tint = IdeSecondary.copy(alpha = 0.8f),
-                        modifier = Modifier.size(16.dp)
-                    )
+            // Action buttons on row
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                if (item.isDirectory) {
+                    IconButton(
+                        onClick = onSelectAsWorkspace,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_folder_open),
+                            contentDescription = "Set as Workspace",
+                            tint = IdeSecondary.copy(alpha = 0.8f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onFileClick,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_file_code),
+                            contentDescription = "Open in Editor",
+                            tint = IdePrimary.copy(alpha = 0.8f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                // 3-Dot Overflow Menu
+                Box {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_more_vert),
+                            contentDescription = "Options",
+                            tint = IdeTextSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        if (!item.isDirectory) {
+                            DropdownMenuItem(
+                                text = { Text("Open in Editor") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_file_code),
+                                        contentDescription = null,
+                                        tint = IdePrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onFileClick()
+                                }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Set as Workspace") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_folder_open),
+                                        contentDescription = null,
+                                        tint = IdeSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onSelectAsWorkspace()
+                                }
+                            )
+                        }
+
+                        DropdownMenuItem(
+                            text = { Text("Copy") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_copy),
+                                    contentDescription = null,
+                                    tint = IdeTextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onCopy()
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = { Text("Cut (Move)") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_cut),
+                                    contentDescription = null,
+                                    tint = IdeTextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onCut()
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = { Text("Rename") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_rename),
+                                    contentDescription = null,
+                                    tint = IdeTextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onRename()
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = { Text("Details") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_info),
+                                    contentDescription = null,
+                                    tint = IdeTextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDetails()
+                            }
+                        )
+
+                        HorizontalDivider()
+
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_delete),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDelete()
+                            }
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+fun DetailRow(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(text = label, color = IdeTextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = value,
+            color = IdeTextPrimary,
+            fontSize = 12.sp,
+            fontFamily = if (label == "Full Path") FontFamily.Monospace else FontFamily.Default
+        )
+    }
+}
+
+private fun isCodeExtension(ext: String): Boolean {
+    val lower = ext.lowercase()
+    return lower in setOf(
+        "kt", "java", "xml", "json", "js", "ts", "py", "html", "css",
+        "c", "cpp", "h", "hpp", "sh", "md", "txt", "gradle", "properties",
+        "yaml", "yml", "sql", "rb", "go", "rs", "php"
+    )
+}
+
+private fun isArchiveExtension(ext: String): Boolean {
+    val lower = ext.lowercase()
+    return lower in setOf("zip", "apk", "rar", "7z", "tar", "gz", "obb", "jar", "aar")
+}
+
+private fun isImageExtension(ext: String): Boolean {
+    val lower = ext.lowercase()
+    return lower in setOf("png", "jpg", "jpeg", "webp", "gif", "svg", "bmp", "ico")
 }

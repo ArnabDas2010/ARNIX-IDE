@@ -6,6 +6,7 @@ import com.arnix.ide.ArnixApp
 import androidx.lifecycle.viewModelScope
 import com.arnix.ide.data.model.*
 import com.arnix.ide.data.repository.GitRepository
+import com.arnix.ide.data.repository.StorageAccessHelper
 import com.arnix.ide.data.repository.WorkspaceRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -195,6 +196,7 @@ class IdeViewModel(
         val tabId = _activeTabId.value ?: return
         val tab = _openTabs.value.find { it.id == tabId } ?: return
 
+        StorageAccessHelper.writeFileRobust(getApplication<Application>(), tab.filePath, tab.content)
         workspaceRepo.updateFileContent(tab.filePath, tab.content)
         _openTabs.value = _openTabs.value.map {
             if (it.id == tabId) it.copy(isDirty = false) else it
@@ -370,16 +372,16 @@ class IdeViewModel(
     }
 
     fun navigateFileManagerTo(path: String) {
-        val f = java.io.File(path)
-        if (f.exists() && f.isDirectory) {
-            _fileManagerPath.value = f.absolutePath
+        if (path.isNotBlank()) {
+            val normalized = path.trimEnd('/')
+            _fileManagerPath.value = if (normalized.isEmpty()) "/" else normalized
         }
     }
 
     fun navigateFileManagerUp() {
         val current = java.io.File(_fileManagerPath.value)
         val parent = current.parentFile
-        if (parent != null && parent.canRead()) {
+        if (parent != null) {
             _fileManagerPath.value = parent.absolutePath
         }
     }
@@ -391,13 +393,14 @@ class IdeViewModel(
     }
 
     fun openExternalFileInEditor(file: java.io.File) {
+        val content = StorageAccessHelper.readFileRobust(getApplication<Application>(), file.absolutePath)
         val item = workspaceRepo.findFileByPath(file.absolutePath) ?: FileItem(
             id = file.absolutePath,
             name = file.name,
             path = file.absolutePath,
             isDirectory = false,
             extension = file.extension,
-            content = try { file.readText(Charsets.UTF_8) } catch (e: Exception) { "" }
+            content = content
         )
         openFileInEditor(item)
         _showFileManager.value = false

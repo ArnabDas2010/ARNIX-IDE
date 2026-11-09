@@ -328,7 +328,7 @@ fun GitScreen(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "${commit.author} • ${commit.timestamp}",
+                                    text = "${commit.author} | ${commit.timestamp}",
                                     color = IdeTextSecondary,
                                     fontSize = 11.sp
                                 )

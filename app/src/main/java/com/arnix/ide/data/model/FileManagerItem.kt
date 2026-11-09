@@ -19,10 +19,25 @@ data class FileManagerItem(
         fun fromFile(file: File): FileManagerItem {
             val isDir = file.isDirectory
             val ext = if (isDir) "" else file.extension
-            val count = if (isDir) (file.listFiles()?.size ?: 0) else 0
+            val count: Int = if (isDir) {
+                try {
+                    val list = file.listFiles()
+                    if (list != null) {
+                        list.size
+                    } else {
+                        file.list()?.size ?: -1
+                    }
+                } catch (e: Exception) {
+                    -1
+                }
+            } else 0
 
             val sizeStr = if (isDir) {
-                "$count items"
+                when {
+                    count > 0 -> "$count items"
+                    count == 0 -> "0 items"
+                    else -> "Folder"
+                }
             } else {
                 formatFileSize(file.length())
             }

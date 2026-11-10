@@ -1,6 +1,7 @@
 package com.arnix.ide.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,10 +17,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,40 +61,46 @@ fun TerminalScreen(
         // Terminal Header
         Surface(
             color = IdeSurface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
+            border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorderSubtle),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(TerminalGreen, shape = androidx.compose.foundation.shape.CircleShape)
-                    )
+                    Box(modifier = Modifier.size(9.dp).background(Color(0xFFEF4444), shape = androidx.compose.foundation.shape.CircleShape))
+                    Box(modifier = Modifier.size(9.dp).background(Color(0xFFF59E0B), shape = androidx.compose.foundation.shape.CircleShape))
+                    Box(modifier = Modifier.size(9.dp).background(Color(0xFF10B981), shape = androidx.compose.foundation.shape.CircleShape))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "ARNIX TERMINAL & CONSOLE",
+                        text = "TERMINAL & CONSOLE",
                         color = IdeTextPrimary,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp
                     )
                 }
 
-                Text(
-                    text = "bash",
-                    color = IdeTextMuted,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+                Surface(
+                    color = IdeSurfaceVariant.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = "bash",
+                        color = TerminalCyan,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
 
@@ -99,25 +108,29 @@ fun TerminalScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(IdeSurfaceVariant)
+                .background(IdeSurface.copy(alpha = 0.5f))
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             quickCommands.forEach { cmd ->
-                SuggestionChip(
-                    onClick = { onExecuteCommand(cmd) },
-                    label = {
-                        Text(
-                            text = cmd,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = IdeTextPrimary
-                        )
-                    },
-                    modifier = Modifier.testTag("chip_cmd_$cmd")
-                )
+                Surface(
+                    color = IdeSurfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorderSubtle),
+                    modifier = Modifier
+                        .clickable { onExecuteCommand(cmd) }
+                        .testTag("chip_cmd_$cmd")
+                ) {
+                    Text(
+                        text = cmd,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = IdeTextSecondary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
 
@@ -149,11 +162,13 @@ fun TerminalScreen(
             }
         }
 
-        // Command Input Bar
+        // Command Input Bar (Auto-adjusts for keyboard via imePadding)
         Surface(
             color = IdeSurface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
-            modifier = Modifier.fillMaxWidth()
+            border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorderSubtle),
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
         ) {
             Row(
                 modifier = Modifier

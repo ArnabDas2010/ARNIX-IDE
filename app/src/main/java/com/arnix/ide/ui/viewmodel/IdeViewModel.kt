@@ -111,11 +111,16 @@ class IdeViewModel(
         if (existingTab != null) {
             _activeTabId.value = existingTab.id
         } else {
+            val contentToUse = if (file.content.isNotEmpty()) {
+                file.content
+            } else {
+                StorageAccessHelper.readFileRobust(getApplication<android.app.Application>(), file.path)
+            }
             val newTab = CodeTab(
                 id = UUID.randomUUID().toString(),
                 filePath = file.path,
                 fileName = file.name,
-                content = file.content,
+                content = contentToUse,
                 isDirty = false
             )
             _openTabs.value = _openTabs.value + newTab

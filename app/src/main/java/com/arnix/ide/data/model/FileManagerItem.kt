@@ -16,8 +16,8 @@ data class FileManagerItem(
     val itemCount: Int = 0
 ) {
     companion object {
-        fun fromFile(file: File): FileManagerItem {
-            val isDir = file.isDirectory
+        fun fromFile(file: File, overrideDirectory: Boolean? = null): FileManagerItem {
+            val isDir = overrideDirectory ?: file.isDirectory
             val ext = if (isDir) "" else file.extension
             val count: Int = if (isDir) {
                 try {

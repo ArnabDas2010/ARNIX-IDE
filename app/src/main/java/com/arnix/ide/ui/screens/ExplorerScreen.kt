@@ -8,11 +8,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -64,31 +66,55 @@ fun ExplorerScreen(
             // Header
             Surface(
                 color = IdeSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
+                border = androidx.compose.foundation.BorderStroke(1.dp, com.arnix.ide.ui.theme.IdeBorderSubtle),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(
-                            text = "PROJECT EXPLORER",
-                            color = IdeTextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = workspaceName,
-                            color = IdeSecondary,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "PROJECT EXPLORER",
+                                color = IdeTextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                letterSpacing = 0.8.sp
+                            )
+                        }
+
+                        Surface(
+                            color = IdeSurfaceVariant.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(IdeSecondary, shape = androidx.compose.foundation.shape.CircleShape)
+                                )
+                                Text(
+                                    text = workspaceName,
+                                    color = IdeSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
 
                     Row(
@@ -96,39 +122,43 @@ fun ExplorerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Browse storage button
-                        OutlinedButton(
+                        Button(
                             onClick = onBrowseClick,
                             modifier = Modifier
-                                .height(32.dp)
+                                .heightIn(min = 32.dp)
                                 .testTag("btn_browse_storage"),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, IdePrimary.copy(alpha = 0.6f))
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = IdeSurfaceVariant,
+                                contentColor = IdePrimary
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, IdePrimary.copy(alpha = 0.4f))
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_folder_open),
                                 contentDescription = "Browse Device Files",
                                 tint = IdePrimary,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Browse",
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 color = IdePrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
 
                         // New file button
-                        FilledTonalButton(
+                        Button(
                             onClick = { onNewFileClick("") },
                             modifier = Modifier
-                                .height(32.dp)
+                                .heightIn(min = 32.dp)
                                 .testTag("btn_new_file_root"),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
                                 containerColor = IdePrimaryContainer,
                                 contentColor = IdeTextPrimary
                             )
@@ -138,8 +168,8 @@ fun ExplorerScreen(
                                 contentDescription = stringResource(R.string.action_new_file),
                                 modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("New", fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("New", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -181,8 +211,8 @@ fun ExplorerScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     items(flatFiles, key = { it.item.id }) { row ->
                         FileRowItem(
@@ -246,16 +276,18 @@ private fun FileRowItem(
     }
 
     val iconColor = when {
-        item.isDirectory -> IdeTertiary
-        item.name.endsWith(".kt") -> IdePrimary
+        item.isDirectory -> IdeSecondary
+        item.name.endsWith(".kt") || item.name.endsWith(".java") -> IdePrimary
         item.name.endsWith(".py") -> IdeSecondary
-        item.name.endsWith(".md") -> TerminalCyan
+        item.name.endsWith(".md") || item.name.endsWith(".txt") -> IdeAccentViolet
+        item.name.endsWith(".json") || item.name.endsWith(".xml") || item.name.endsWith(".kts") -> IdeTertiary
         else -> IdeTextSecondary
     }
 
     Surface(
-        color = IdeSurface,
-        shape = RoundedCornerShape(6.dp),
+        color = if (item.isDirectory) IdeSurface else IdeSurface.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, com.arnix.ide.ui.theme.IdeBorderSubtle),
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = (depth * 14).dp)
@@ -267,20 +299,34 @@ private fun FileRowItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.weight(1f)
             ) {
+                // Expanding chevron indicator for directories
+                if (item.isDirectory) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = if (item.isExpanded) "Collapse" else "Expand",
+                        tint = IdeTextMuted,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .rotate(if (item.isExpanded) 0f else -90f)
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(16.dp))
+                }
+
                 Icon(
                     painter = painterResource(id = drawableRes),
                     contentDescription = null,
                     tint = iconColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
 
                 Text(
@@ -288,7 +334,9 @@ private fun FileRowItem(
                     color = IdeTextPrimary,
                     fontSize = 13.sp,
                     fontFamily = if (item.isDirectory) FontFamily.Default else FontFamily.Monospace,
-                    fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal
+                    fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
 
@@ -302,7 +350,7 @@ private fun FileRowItem(
                             imageVector = Icons.Default.Add,
                             contentDescription = "New file in folder",
                             tint = IdeTextSecondary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -315,7 +363,7 @@ private fun FileRowItem(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "Delete file",
                         tint = IdeTextMuted,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
             }

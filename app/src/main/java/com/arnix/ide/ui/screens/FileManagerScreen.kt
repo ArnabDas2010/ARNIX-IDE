@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -161,7 +162,7 @@ fun FileManagerScreen(
         }
     }
 
-    val canGoUp = currentDir.parentFile != null && currentDir.parentFile?.canRead() == true
+    val canGoUp = currentDir.parentFile != null && currentDir.absolutePath != "/"
 
     BackHandler {
         if (canGoUp) {
@@ -224,8 +225,8 @@ fun FileManagerScreen(
         topBar = {
             Surface(
                 color = IdeSurface,
-                tonalElevation = 4.dp,
-                border = BorderStroke(1.dp, IdeBorder)
+                tonalElevation = 2.dp,
+                border = BorderStroke(1.dp, IdeBorderSubtle)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                     // Header Bar 1: Back + Title/Status + New + Refresh + Use Folder
@@ -350,9 +351,9 @@ fun FileManagerScreen(
                             // Use Folder Button (Set as IDE Workspace)
                             Button(
                                 onClick = { onSelectWorkspaceFolder(currentDir.absolutePath) },
-                                colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary, contentColor = IdeBackground),
+                                shape = RoundedCornerShape(16.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 modifier = Modifier.height(30.dp).testTag("btn_select_current_workspace")
                             ) {
                                 Icon(
@@ -396,8 +397,8 @@ fun FileManagerScreen(
                         // Clickable Path Field: tapping opens vertical shortcut selector!
                         Surface(
                             color = IdeBackground,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, IdeBorder),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, IdeBorderSubtle),
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable {
@@ -502,33 +503,46 @@ fun FileManagerScreen(
                         }
                     }
 
-                    // Category Filter Chips: All | Folders | Files
+                    // Category Filter Chips: All | Folders | Files (Horizontally scrollable & auto-fit)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val chipColors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = IdePrimary.copy(alpha = 0.15f),
+                            selectedLabelColor = IdePrimary,
+                            containerColor = IdeSurfaceVariant.copy(alpha = 0.5f),
+                            labelColor = IdeTextSecondary
+                        )
                         FilterChip(
                             selected = activeCategory == FileCategoryFilter.ALL,
                             onClick = { activeCategory = FileCategoryFilter.ALL },
-                            label = { Text("All (${fileList.size})", fontSize = 11.sp) },
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(26.dp)
+                            label = { Text("All (${fileList.size})", fontSize = 11.sp, fontWeight = if (activeCategory == FileCategoryFilter.ALL) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = chipColors,
+                            border = BorderStroke(1.dp, if (activeCategory == FileCategoryFilter.ALL) IdePrimary.copy(alpha = 0.4f) else IdeBorderSubtle),
+                            modifier = Modifier.heightIn(min = 30.dp)
                         )
                         FilterChip(
                             selected = activeCategory == FileCategoryFilter.FOLDERS,
                             onClick = { activeCategory = FileCategoryFilter.FOLDERS },
-                            label = { Text("Folders ($folderCount)", fontSize = 11.sp) },
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(26.dp)
+                            label = { Text("Folders ($folderCount)", fontSize = 11.sp, fontWeight = if (activeCategory == FileCategoryFilter.FOLDERS) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = chipColors,
+                            border = BorderStroke(1.dp, if (activeCategory == FileCategoryFilter.FOLDERS) IdePrimary.copy(alpha = 0.4f) else IdeBorderSubtle),
+                            modifier = Modifier.heightIn(min = 30.dp)
                         )
                         FilterChip(
                             selected = activeCategory == FileCategoryFilter.FILES,
                             onClick = { activeCategory = FileCategoryFilter.FILES },
-                            label = { Text("Files ($fileCount)", fontSize = 11.sp) },
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(26.dp)
+                            label = { Text("Files ($fileCount)", fontSize = 11.sp, fontWeight = if (activeCategory == FileCategoryFilter.FILES) FontWeight.Bold else FontWeight.Normal) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = chipColors,
+                            border = BorderStroke(1.dp, if (activeCategory == FileCategoryFilter.FILES) IdePrimary.copy(alpha = 0.4f) else IdeBorderSubtle),
+                            modifier = Modifier.heightIn(min = 30.dp)
                         )
                     }
 
@@ -737,21 +751,41 @@ fun FileManagerScreen(
                                 }
                             }
 
-                            Button(
-                                onClick = {
-                                    createIsFolder = false
-                                    createNameInput = ""
-                                    showCreateDialog = true
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimaryContainer)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_new_file),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Create New File", color = IdePrimary)
+                                if (canGoUp) {
+                                    OutlinedButton(
+                                        onClick = onNavigateUp,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Parent Folder", color = IdeTextPrimary, fontSize = 12.sp)
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        createIsFolder = false
+                                        createNameInput = ""
+                                        showCreateDialog = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = IdePrimaryContainer)
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_new_file),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("New File", color = IdePrimary, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -763,6 +797,14 @@ fun FileManagerScreen(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    if (canGoUp) {
+                        item(key = "__parent_folder_up__") {
+                            ParentFolderUpRow(
+                                onNavigateUp = onNavigateUp,
+                                parentName = currentDir.parentFile?.name ?: ".."
+                            )
+                        }
+                    }
                     items(filteredList, key = { it.path }) { item ->
                         FileManagerRowItem(
                             item = item,
@@ -829,7 +871,13 @@ fun FileManagerScreen(
                         }
                     },
                     text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Text(
                                 text = "Location: ${currentDir.absolutePath}",
                                 color = IdeTextSecondary,
@@ -914,7 +962,13 @@ fun FileManagerScreen(
                         }
                     },
                     text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
                                 text = "Current: ${itemToRename!!.name}",
                                 color = IdeTextSecondary,
@@ -1037,7 +1091,10 @@ fun FileManagerScreen(
                     text = {
                         Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.verticalScroll(rememberScrollState())
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState())
                         ) {
                             DetailRow("Name", item.name)
                             DetailRow("Type", if (item.isDirectory) "Directory / Folder" else "${item.extension.uppercase().ifEmpty { "Generic" }} File")
@@ -1280,10 +1337,11 @@ fun FileManagerRowItem(
 
     Surface(
         color = IdeSurface,
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, IdeBorder.copy(alpha = 0.6f)),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, IdeBorderSubtle),
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 50.dp)
             .clickable {
                 if (item.isDirectory) onFolderClick() else onFileClick()
             }
@@ -1325,77 +1383,54 @@ fun FileManagerRowItem(
                     painter = painterResource(id = iconRes),
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(26.dp)
                 )
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    Text(
+                        text = item.name,
+                        color = if (item.isHidden) IdeTextSecondary else IdeTextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = item.name,
-                            color = IdeTextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = if (item.isDirectory) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-
-                        if (!item.isDirectory && item.extension.isNotEmpty()) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Surface(
-                                color = IdePrimaryContainer.copy(alpha = 0.3f),
-                                shape = RoundedCornerShape(3.dp)
-                            ) {
-                                Text(
-                                    text = item.extension.uppercase(),
-                                    color = IdePrimary,
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                )
-                            }
-                        }
-
-                        if (item.isHidden) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Surface(
-                                color = IdeSurfaceVariant,
-                                shape = RoundedCornerShape(3.dp)
-                            ) {
-                                Text(
-                                    text = "hidden",
-                                    color = IdeTextMuted,
-                                    fontSize = 8.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                )
-                            }
-                        }
-                    }
+                    )
 
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 2.dp)
                     ) {
                         Text(
                             text = item.sizeFormatted,
-                            color = if (item.sizeFormatted.contains("Access required")) IdeTertiary else IdeTextMuted,
-                            fontSize = 10.sp
+                            color = if (item.sizeFormatted.contains("•")) IdeSecondary else IdeTextMuted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            text = "|",
-                            color = IdeTextMuted,
-                            fontSize = 9.sp
-                        )
-                        Text(
-                            text = item.lastModifiedFormatted,
-                            color = IdeTextMuted,
-                            fontSize = 10.sp
-                        )
+                        if (!item.isDirectory && item.extension.isNotBlank() && item.extension.length in 1..6 && !item.extension.contains("_")) {
+                            Text(text = "•", color = IdeTextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+                            Text(
+                                text = item.extension.uppercase(),
+                                color = IdePrimary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                        if (item.lastModifiedFormatted.isNotEmpty()) {
+                            Text(text = "•", color = IdeTextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+                            Text(
+                                text = item.lastModifiedFormatted,
+                                color = IdeTextMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -1403,30 +1438,30 @@ fun FileManagerRowItem(
             // Action buttons on row
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (item.isDirectory) {
                     IconButton(
                         onClick = onSelectAsWorkspace,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_folder_open),
                             contentDescription = "Set as Workspace",
-                            tint = IdeSecondary.copy(alpha = 0.8f),
-                            modifier = Modifier.size(15.dp)
+                            tint = IdeSecondary.copy(alpha = 0.85f),
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 } else {
                     IconButton(
                         onClick = onFileClick,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_file_code),
                             contentDescription = "Open in Editor",
-                            tint = IdePrimary.copy(alpha = 0.8f),
-                            modifier = Modifier.size(15.dp)
+                            tint = IdePrimary.copy(alpha = 0.85f),
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -1435,13 +1470,13 @@ fun FileManagerRowItem(
                 Box {
                     IconButton(
                         onClick = { showMenu = true },
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_more_vert),
                             contentDescription = "Options",
                             tint = IdeTextSecondary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
@@ -1581,6 +1616,67 @@ fun DetailRow(label: String, value: String) {
             fontSize = 12.sp,
             fontFamily = if (label == "Full Path") FontFamily.Monospace else FontFamily.Default
         )
+    }
+}
+
+@Composable
+fun ParentFolderUpRow(
+    onNavigateUp: () -> Unit,
+    parentName: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = IdeSurface,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, IdeBorderSubtle),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onNavigateUp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                color = IdeSecondary.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Parent Folder",
+                        tint = IdeSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "..",
+                    color = IdeTextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Parent: $parentName",
+                    color = IdeTextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = null,
+                tint = IdeTextMuted.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
     }
 }
 

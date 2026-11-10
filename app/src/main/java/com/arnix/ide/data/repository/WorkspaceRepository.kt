@@ -2,9 +2,13 @@ package com.arnix.ide.data.repository
 
 import android.content.Context
 import com.arnix.ide.data.model.FileItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
@@ -23,24 +27,32 @@ class WorkspaceRepository(private val context: Context? = null) {
         seedSampleWorkspace()
     }
 
+    private val repoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+
     fun setWorkspaceFolder(folderPath: String) {
         val dir = File(folderPath)
         _workspaceRootPath.value = dir.absolutePath
         _workspaceName.value = dir.name.ifEmpty { dir.absolutePath }
-        _rootFiles.value = loadFilesFromDisk(dir, currentDepth = 0, maxDepth = 4)
+        repoScope.launch {
+            val directItems = loadDirectChildrenFromDisk(dir)
+            _rootFiles.value = directItems
+        }
     }
 
     fun refreshWorkspace() {
         val currentPath = _workspaceRootPath.value
         if (currentPath != null && currentPath != "Sample Workspace") {
             val dir = File(currentPath)
-            _rootFiles.value = loadFilesFromDisk(dir, currentDepth = 0, maxDepth = 4)
+            repoScope.launch {
+                val directItems = loadDirectChildrenFromDisk(dir)
+                _rootFiles.value = directItems
+            }
             return
         }
         seedSampleWorkspace()
     }
 
-    private fun loadFilesFromDisk(directory: File, currentDepth: Int, maxDepth: Int): List<FileItem> {
+    private fun loadDirectChildrenFromDisk(directory: File): List<FileItem> {
         val robustItems = if (context != null) {
             StorageAccessHelper.listFilesRobust(context, directory, showHidden = false)
         } else {
@@ -48,46 +60,20 @@ class WorkspaceRepository(private val context: Context? = null) {
             files.map { com.arnix.ide.data.model.FileManagerItem.fromFile(it) }
         }
 
-        val sortedItems = robustItems.filter { !it.name.startsWith(".git") && it.name != "build" && it.name != ".gradle" }
+        val sortedItems = robustItems
+            .filter { !it.name.startsWith(".git") && it.name != "build" && it.name != ".gradle" }
             .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
 
         return sortedItems.map { item ->
-            val file = File(item.path)
-            val isDir = item.isDirectory
-            val ext = if (isDir) "" else item.extension
-            val children = if (isDir && currentDepth < maxDepth) {
-                loadFilesFromDisk(file, currentDepth + 1, maxDepth)
-            } else {
-                emptyList()
-            }
-
-            val content = if (!isDir) {
-                if (context != null) {
-                    StorageAccessHelper.readFileRobust(context, item.path)
-                } else {
-                    try {
-                        if (file.exists() && file.length() < 2 * 1024 * 1024) {
-                            file.readText(Charsets.UTF_8)
-                        } else {
-                            ""
-                        }
-                    } catch (e: Exception) {
-                        ""
-                    }
-                }
-            } else {
-                ""
-            }
-
             FileItem(
                 id = item.path,
                 name = item.name,
                 path = item.path,
-                isDirectory = isDir,
-                extension = ext,
-                content = content,
-                children = children,
-                isExpanded = currentDepth < 1
+                isDirectory = item.isDirectory,
+                extension = if (item.isDirectory) "" else item.extension,
+                content = "",
+                children = emptyList(),
+                isExpanded = false
             )
         }
     }
@@ -412,17 +398,25 @@ if __name__ == "__main__":
     }
 
     fun toggleFolderExpanded(folderPath: String) {
-        fun toggleInList(items: List<FileItem>): List<FileItem> {
-            return items.map { item ->
-                if (item.path == folderPath && item.isDirectory) {
-                    item.copy(isExpanded = !item.isExpanded)
-                } else if (item.isDirectory) {
-                    item.copy(children = toggleInList(item.children))
-                } else {
-                    item
+        repoScope.launch {
+            fun toggleInList(items: List<FileItem>): List<FileItem> {
+                return items.map { item ->
+                    if (item.path == folderPath && item.isDirectory) {
+                        val willExpand = !item.isExpanded
+                        val childrenToUse = if (willExpand && item.children.isEmpty()) {
+                            loadDirectChildrenFromDisk(File(item.path))
+                        } else {
+                            item.children
+                        }
+                        item.copy(isExpanded = willExpand, children = childrenToUse)
+                    } else if (item.isDirectory && item.isExpanded) {
+                        item.copy(children = toggleInList(item.children))
+                    } else {
+                        item
+                    }
                 }
             }
+            _rootFiles.value = toggleInList(_rootFiles.value)
         }
-        _rootFiles.value = toggleInList(_rootFiles.value)
     }
 }

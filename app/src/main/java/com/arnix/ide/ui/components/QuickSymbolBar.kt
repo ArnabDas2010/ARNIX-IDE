@@ -1,6 +1,7 @@
 package com.arnix.ide.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -63,35 +64,47 @@ fun QuickSymbolBar(
             .testTag("quick_symbol_bar"),
         color = IdeSurface,
         tonalElevation = 2.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder)
+        border = androidx.compose.foundation.BorderStroke(1.dp, com.arnix.ide.ui.theme.IdeBorderSubtle)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .padding(horizontal = 6.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             symbols.forEach { (label, insertValue) ->
-                Button(
-                    onClick = { onInsertSymbol(insertValue) },
+                val keyColor = when (label) {
+                    "TAB", "->" -> com.arnix.ide.ui.theme.IdeSecondary
+                    "{", "}", "(", ")", "[", "]" -> com.arnix.ide.ui.theme.IdePrimary
+                    ";", ":", ",", "." -> com.arnix.ide.ui.theme.IdeTextSecondary
+                    "=", "+", "-", "*", "/", "\\" -> com.arnix.ide.ui.theme.IdeTertiary
+                    "\"", "'" -> com.arnix.ide.ui.theme.IdeAccentViolet
+                    else -> com.arnix.ide.ui.theme.IdeTextPrimary
+                }
+
+                Surface(
+                    color = IdeSurfaceVariant.copy(alpha = 0.8f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, com.arnix.ide.ui.theme.IdeBorderSubtle),
                     modifier = Modifier
-                        .height(34.dp)
-                        .testTag("symbol_btn_$label"),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = IdeSurfaceVariant,
-                        contentColor = IdeTextPrimary
-                    )
+                        .heightIn(min = 34.dp, max = 40.dp)
+                        .testTag("symbol_btn_$label")
+                        .clickable { onInsertSymbol(insertValue) }
                 ) {
-                    Text(
-                        text = label,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = if (label == "TAB") 11.sp else 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Box(
+                        modifier = Modifier.padding(horizontal = 11.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = if (label == "TAB" || label == "->") 11.sp else 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = keyColor
+                        )
+                    }
                 }
             }
         }

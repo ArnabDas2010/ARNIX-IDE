@@ -1,11 +1,14 @@
 package com.arnix.ide.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -47,144 +50,162 @@ fun GitScreen(
             .background(IdeBackground)
             .testTag("git_screen")
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Responsive Centered Header
             Surface(
                 color = IdeSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
+                border = BorderStroke(1.dp, IdeBorderSubtle),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 840.dp)
+                            .padding(14.dp)
                     ) {
-                        Column {
-                            Text(
-                                text = "GIT & GITHUB INTEGRATION",
-                                color = IdeTextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = gitState.remoteRepoUrl,
-                                color = IdePrimary,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                Text(
+                                    text = "GIT & GITHUB",
+                                    color = IdeTextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    letterSpacing = 0.8.sp
+                                )
+                                Text(
+                                    text = gitState.remoteRepoUrl,
+                                    color = IdePrimary,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1
+                                )
+                            }
 
-                        // Branch Switcher Chip
-                        Box {
-                            FilterChip(
-                                selected = true,
-                                onClick = { showBranchMenu = true },
-                                label = {
-                                    Text(
-                                        text = gitState.currentBranch,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 12.sp
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_git_branch),
-                                        contentDescription = "Current branch",
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                trailingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = IdeSurfaceVariant,
-                                    selectedLabelColor = IdeTextPrimary,
-                                    selectedLeadingIconColor = IdeSecondary
-                                ),
-                                modifier = Modifier.testTag("chip_current_branch")
-                            )
+                            // Branch Switcher Chip
+                            Box {
+                                FilterChip(
+                                    selected = true,
+                                    onClick = { showBranchMenu = true },
+                                    label = {
+                                        Text(
+                                            text = gitState.currentBranch,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_git_branch),
+                                            contentDescription = "Current branch",
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = IdeSurfaceVariant,
+                                        selectedLabelColor = IdeTextPrimary,
+                                        selectedLeadingIconColor = IdeSecondary
+                                    ),
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, IdeBorderSubtle),
+                                    modifier = Modifier.testTag("chip_current_branch")
+                                )
 
-                            DropdownMenu(
-                                expanded = showBranchMenu,
-                                onDismissRequest = { showBranchMenu = false },
-                                modifier = Modifier.background(IdeSurface)
-                            ) {
-                                gitState.availableBranches.forEach { branch ->
+                                DropdownMenu(
+                                    expanded = showBranchMenu,
+                                    onDismissRequest = { showBranchMenu = false },
+                                    modifier = Modifier.background(IdeSurface)
+                                ) {
+                                    gitState.availableBranches.forEach { branch ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = branch,
+                                                    color = if (branch == gitState.currentBranch) IdeSecondary else IdeTextPrimary,
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            },
+                                            onClick = {
+                                                onSwitchBranch(branch)
+                                                showBranchMenu = false
+                                            }
+                                        )
+                                    }
+                                    HorizontalDivider(color = IdeBorderSubtle)
                                     DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = branch,
-                                                color = if (branch == gitState.currentBranch) IdeSecondary else IdeTextPrimary,
-                                                fontFamily = FontFamily.Monospace
-                                            )
-                                        },
+                                        text = { Text("+ New Branch...", color = IdePrimary) },
                                         onClick = {
-                                            onSwitchBranch(branch)
                                             showBranchMenu = false
+                                            showNewBranchDialog = true
                                         }
                                     )
                                 }
-                                HorizontalDivider(color = IdeBorder)
-                                DropdownMenuItem(
-                                    text = { Text("+ New Branch...", color = IdePrimary) },
-                                    onClick = {
-                                        showBranchMenu = false
-                                        showNewBranchDialog = true
-                                    }
-                                )
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                    // Remote Sync Buttons (Push / Pull)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { toastMessage = "Pulled latest changes from origin/${gitState.currentBranch}" },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .testTag("btn_git_pull"),
-                            shape = RoundedCornerShape(6.dp),
-                            contentPadding = PaddingValues(0.dp)
+                        // Remote Sync Buttons (Push / Pull)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = IdeTextPrimary)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pull", fontSize = 12.sp, color = IdeTextPrimary)
-                        }
+                            OutlinedButton(
+                                onClick = { toastMessage = "Pulled latest changes from origin/${gitState.currentBranch}" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 34.dp, max = 40.dp)
+                                    .testTag("btn_git_pull"),
+                                shape = RoundedCornerShape(16.dp),
+                                border = BorderStroke(1.dp, IdeBorderSubtle),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(15.dp), tint = IdeTextPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Pull", fontSize = 12.sp, color = IdeTextPrimary)
+                            }
 
-                        Button(
-                            onClick = { toastMessage = "Pushed commits to GitHub: ${gitState.githubUser}/ARNIX-IDE" },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .testTag("btn_git_push"),
-                            colors = ButtonDefaults.buttonColors(containerColor = IdePrimary),
-                            shape = RoundedCornerShape(6.dp),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(16.dp), tint = IdeBackground)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Push", fontSize = 12.sp, color = IdeBackground, fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = { toastMessage = "Pushed commits to GitHub: ${gitState.githubUser}/ARNIX-IDE" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 34.dp, max = 40.dp)
+                                    .testTag("btn_git_push"),
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimary, contentColor = IdeBackground),
+                                shape = RoundedCornerShape(16.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(15.dp), tint = IdeBackground)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Push", fontSize = 12.sp, color = IdeBackground, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
 
-            // Scrollable Section: Changes & Commit History
+            // Scrollable Section: Changes & Commit History (Centered max 840dp for wide screens)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
+                    .widthIn(max = 840.dp)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -192,33 +213,54 @@ fun GitScreen(
                 item {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = IdeSurface),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
-                        shape = RoundedCornerShape(8.dp)
+                        border = BorderStroke(1.dp, IdeBorderSubtle),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = "COMMIT CHANGES",
-                                color = IdeTextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    color = IdePrimary.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = "COMMIT",
+                                        color = IdePrimary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "RECORD WORKING TREE STATE",
+                                    color = IdeTextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    letterSpacing = 0.8.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
                             OutlinedTextField(
                                 value = commitMessage,
                                 onValueChange = { commitMessage = it },
-                                placeholder = { Text("Enter commit message (e.g. feature: implement editor)", color = IdeTextMuted, fontSize = 12.sp) },
+                                placeholder = { Text("e.g. feat: modernize theme & responsive controls", color = IdeTextMuted, fontSize = 12.sp) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("input_commit_message"),
+                                shape = RoundedCornerShape(8.dp),
                                 textStyle = LocalTextStyle.current.copy(color = IdeTextPrimary, fontSize = 13.sp),
                                 maxLines = 3,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = IdePrimary,
-                                    unfocusedBorderColor = IdeBorder
+                                    unfocusedBorderColor = IdeBorderSubtle,
+                                    focusedContainerColor = IdeSurfaceVariant.copy(alpha = 0.4f),
+                                    unfocusedContainerColor = IdeSurfaceVariant.copy(alpha = 0.2f)
                                 )
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -228,7 +270,7 @@ fun GitScreen(
                                     onClick = onStageAll,
                                     modifier = Modifier.testTag("btn_stage_all")
                                 ) {
-                                    Text("Stage All (${gitState.unstagedFiles.size})", color = IdePrimary, fontSize = 12.sp)
+                                    Text("Stage All (${gitState.unstagedFiles.size})", color = IdePrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
 
                                 Button(
@@ -244,7 +286,8 @@ fun GitScreen(
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = IdeSecondary),
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
                                     modifier = Modifier.testTag("btn_commit")
                                 ) {
                                     Text("Commit", color = IdeBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -308,14 +351,14 @@ fun GitScreen(
                 items(gitState.commitHistory) { commit ->
                     Card(
                         colors = CardDefaults.cardColors(containerColor = IdeSurface),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
-                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, IdeBorderSubtle),
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(10.dp),
+                                .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -326,23 +369,25 @@ fun GitScreen(
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
+                                Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = "${commit.author} | ${commit.timestamp}",
+                                    text = "${commit.author} • ${commit.timestamp}",
                                     color = IdeTextSecondary,
                                     fontSize = 11.sp
                                 )
                             }
                             Surface(
                                 color = IdeSurfaceVariant,
-                                shape = RoundedCornerShape(4.dp)
+                                border = BorderStroke(1.dp, IdeBorderSubtle),
+                                shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
                                     text = commit.shortHash,
                                     color = IdePrimary,
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         }
@@ -351,19 +396,26 @@ fun GitScreen(
             }
         }
 
-        // New Branch Dialog
+        // New Branch Dialog (Responsive scrollable)
         if (showNewBranchDialog) {
             AlertDialog(
                 onDismissRequest = { showNewBranchDialog = false },
                 title = { Text("Create New Branch", color = IdeTextPrimary) },
                 text = {
-                    OutlinedTextField(
-                        value = newBranchName,
-                        onValueChange = { newBranchName = it },
-                        placeholder = { Text("e.g. feature/new-tool") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 480.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        OutlinedTextField(
+                            value = newBranchName,
+                            onValueChange = { newBranchName = it },
+                            placeholder = { Text("e.g. feature/new-tool") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 },
                 confirmButton = {
                     Button(
@@ -415,20 +467,20 @@ private fun GitChangeRow(
 ) {
     Surface(
         color = IdeSurface,
-        shape = RoundedCornerShape(6.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, IdeBorder),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, IdeBorderSubtle),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 val statusText = when (change.status) {
@@ -445,7 +497,8 @@ private fun GitChangeRow(
                 }
 
                 Surface(
-                    color = statusColor.copy(alpha = 0.2f),
+                    color = statusColor.copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, statusColor.copy(alpha = 0.3f)),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
@@ -453,6 +506,7 @@ private fun GitChangeRow(
                         color = statusColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -465,11 +519,14 @@ private fun GitChangeRow(
                 )
             }
 
-            TextButton(
+            OutlinedButton(
                 onClick = onActionClick,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, IdeBorderSubtle),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                modifier = Modifier.heightIn(min = 28.dp)
             ) {
-                Text(actionLabel, color = IdePrimary, fontSize = 12.sp)
+                Text(actionLabel, color = IdePrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }

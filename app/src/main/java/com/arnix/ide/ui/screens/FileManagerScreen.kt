@@ -763,6 +763,32 @@ fun FileManagerScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Enable All Files Access", fontWeight = FontWeight.Bold)
                             }
+                        } else if (isRestricted && !hasSafAccess) {
+                            Text(
+                                text = "Access $folderTargetName",
+                                color = IdeTextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Android requires explicit permission to view files in $folderTargetName.\nTap below to select 'USE THIS FOLDER' in the system picker.",
+                                color = IdeTextSecondary,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Button(
+                                onClick = { safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb)) },
+                                colors = ButtonDefaults.buttonColors(containerColor = IdePrimary),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_folder_open),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Authorize $folderTargetName", fontWeight = FontWeight.Bold)
+                            }
                         } else {
                             val hiddenCount = remember(currentPath, refreshKey) {
                                 StorageAccessHelper.listFilesRobust(context, currentDir, showHidden = true).count { it.isHidden }
@@ -848,6 +874,11 @@ fun FileManagerScreen(
                                 } else {
                                     lastClickedFolderPath = item.path
                                     lastClickTimestamp = now
+                                    val isObb = item.path.contains("Android/obb", ignoreCase = true)
+                                    val isDataOrObbRoot = item.path.endsWith("/Android/data", ignoreCase = true) || item.path.endsWith("/Android/obb", ignoreCase = true)
+                                    if (isDataOrObbRoot && !SafStorageManager.hasPermission(context, isObb)) {
+                                        safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb))
+                                    }
                                     onNavigateTo(item.path)
                                 }
                             },
@@ -1201,6 +1232,11 @@ fun FileManagerScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
+                                            val isObb = destination.path.contains("Android/obb", ignoreCase = true)
+                                            val isDataOrObb = destination.path.endsWith("/Android/data", ignoreCase = true) || destination.path.endsWith("/Android/obb", ignoreCase = true)
+                                            if (isDataOrObb && !SafStorageManager.hasPermission(context, isObb)) {
+                                                safLauncher.launch(SafStorageManager.createOpenFolderIntent(isObb))
+                                            }
                                             onNavigateTo(destination.path)
                                             showLocationPickerDialog = false
                                         }

@@ -95,10 +95,9 @@ object SafStorageManager {
      * so on Android 11 the system file picker opens right on the folder with "USE THIS FOLDER" button!
      */
     fun createOpenFolderIntent(isObb: Boolean): Intent {
-        val documentId = if (isObb) "primary:Android/obb" else "primary:Android/data"
-
-        // Build document Uri for Android 11 EXTRA_INITIAL_URI
-        val initialUri = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, documentId)
+        val hint = if (isObb) "Android/obb" else "Android/data"
+        val encoded = Uri.encode(hint)
+        val initialUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3A$encoded")
 
         return Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

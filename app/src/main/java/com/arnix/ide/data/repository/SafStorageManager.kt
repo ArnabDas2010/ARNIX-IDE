@@ -118,8 +118,12 @@ object SafStorageManager {
      * primary:Android/data/com.whatsapp
      */
     fun pathToDocumentId(path: String, isObb: Boolean): String {
-        val rootPrefix = "/storage/emulated/0/"
-        val cleanPath = path.removePrefix(rootPrefix).trim('/')
+        val cleanPath = path
+            .removePrefix("/storage/emulated/0/")
+            .removePrefix("storage/emulated/0/")
+            .removePrefix("/sdcard/")
+            .removePrefix("sdcard/")
+            .trim('/')
         return if (cleanPath.isEmpty()) {
             if (isObb) "primary:Android/obb" else "primary:Android/data"
         } else {
@@ -163,6 +167,8 @@ object SafStorageManager {
                 val dateIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
                 val normalizedPath = path.trimEnd('/')
+                val isRootDataOrObb = normalizedPath.endsWith("Android/data", ignoreCase = true) ||
+                                      normalizedPath.endsWith("Android/obb", ignoreCase = true)
 
                 while (cursor.moveToNext()) {
                     val childDocId = if (idIdx != -1) cursor.getString(idIdx) else ""
@@ -177,16 +183,31 @@ object SafStorageManager {
                     if (!showHidden && isHidden) continue
                     if (searchQuery.isNotBlank() && !displayName.contains(searchQuery, ignoreCase = true)) continue
 
-                    val isDir = mimeType == DocumentsContract.Document.MIME_TYPE_DIR
+                    val isDir = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
+                                mimeType.contains("directory", ignoreCase = true) ||
+                                mimeType.contains("dir", ignoreCase = true) ||
+                                childDocId.endsWith("/") ||
+                                isRootDataOrObb
                     val childPath = "$normalizedPath/$displayName"
-                    val ext = if (isDir) "" else displayName.substringAfterLast(".", "")
+                    val ext = if (isDir) "" else (if (displayName.contains(".")) displayName.substringAfterLast(".") else "")
+
+                    val sizeFormatted = if (isDir) {
+                        if (isRootDataOrObb) {
+                            val label = StorageAccessHelper.getAppDisplayName(context, displayName)
+                            if (label != null) "$label • Folder" else "Folder"
+                        } else {
+                            "Folder"
+                        }
+                    } else {
+                        formatSize(sizeBytes)
+                    }
 
                     items.add(
                         FileManagerItem(
                             name = displayName,
                             path = childPath,
                             isDirectory = isDir,
-                            sizeFormatted = if (isDir) "Folder" else formatSize(sizeBytes),
+                            sizeFormatted = sizeFormatted,
                             lastModifiedFormatted = if (lastMod > 0) dateFormat.format(Date(lastMod)) else "Recently",
                             extension = ext,
                             isHidden = isHidden

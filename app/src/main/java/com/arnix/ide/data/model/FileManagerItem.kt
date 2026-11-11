@@ -19,28 +19,7 @@ data class FileManagerItem(
         fun fromFile(file: File, overrideDirectory: Boolean? = null): FileManagerItem {
             val isDir = overrideDirectory ?: file.isDirectory
             val ext = if (isDir) "" else file.extension
-            val count: Int = if (isDir) {
-                try {
-                    val list = file.listFiles()
-                    if (list != null) {
-                        list.size
-                    } else {
-                        file.list()?.size ?: -1
-                    }
-                } catch (e: Exception) {
-                    -1
-                }
-            } else 0
-
-            val sizeStr = if (isDir) {
-                when {
-                    count > 0 -> "$count items"
-                    count == 0 -> "0 items"
-                    else -> "Folder"
-                }
-            } else {
-                formatFileSize(file.length())
-            }
+            val sizeStr = if (isDir) "Folder" else formatFileSize(file.length())
 
             val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
             val modifiedStr = dateFormat.format(Date(file.lastModified()))
@@ -53,7 +32,7 @@ data class FileManagerItem(
                 lastModifiedFormatted = modifiedStr,
                 extension = ext,
                 isHidden = file.name.startsWith("."),
-                itemCount = count
+                itemCount = if (isDir) -1 else 0
             )
         }
 

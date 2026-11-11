@@ -71,6 +71,29 @@ object StorageAccessHelper {
                normalized.contains("Android/obb", ignoreCase = true)
     }
 
+    val detectedDirectoryNames = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun getAlternateMounts(dir: File): List<String> {
+        val paths = LinkedHashSet<String>()
+        val abs = dir.absolutePath.replace("//", "/")
+        paths.add(abs)
+        if (abs.startsWith("/storage/emulated/0/")) {
+            val sub = abs.substringAfter("/storage/emulated/0/")
+            paths.add("/sdcard/$sub")
+            paths.add("/mnt/user/0/primary/$sub")
+            paths.add("/mnt/runtime/full/emulated/0/$sub")
+            paths.add("/mnt/runtime/write/emulated/0/$sub")
+            paths.add("/mnt/runtime/default/emulated/0/$sub")
+            paths.add("/storage/self/primary/$sub")
+        } else if (abs.startsWith("/sdcard/")) {
+            val sub = abs.substringAfter("/sdcard/")
+            paths.add("/storage/emulated/0/$sub")
+            paths.add("/mnt/user/0/primary/$sub")
+            paths.add("/mnt/runtime/full/emulated/0/$sub")
+        }
+        return paths.toList()
+    }
+
     fun listFilesRobust(
         context: Context,
         dir: File,
@@ -80,21 +103,70 @@ object StorageAccessHelper {
         val path = dir.absolutePath.replace("//", "/")
         val isDataDir = dir.name.equals("data", ignoreCase = true) && dir.parentFile?.name.equals("Android", ignoreCase = true)
         val isObbDir = dir.name.equals("obb", ignoreCase = true) && dir.parentFile?.name.equals("Android", ignoreCase = true)
-        val isPackageDir = dir.parentFile?.name.equals("data", ignoreCase = true) && dir.parentFile?.parentFile?.name.equals("Android", ignoreCase = true)
-        val isPackageFilesDir = dir.name.equals("files", ignoreCase = true) && dir.parentFile?.parentFile?.name.equals("data", ignoreCase = true)
+        val isRestricted = isRestrictedPath(path)
+
+        // 1. If SAF tree permission is active for this restricted path, query SAF DocumentProvider first
+        if (isRestricted) {
+            val isObb = path.contains("Android/obb", ignoreCase = true)
+            if (SafStorageManager.hasPermission(context, isObb)) {
+                val safItems = SafStorageManager.listDirectory(context, path, showHidden, searchQuery)
+                if (safItems.isNotEmpty()) {
+                    return safItems
+                }
+            }
+        }
 
         val filesSet = LinkedHashSet<File>()
 
-        // 1. Try standard Java File.listFiles()
-        dir.listFiles()?.forEach { filesSet.add(it) }
-
-        // 2. Try dir.list()
-        if (filesSet.isEmpty()) {
-            dir.list()?.forEach { filesSet.add(File(dir, it)) }
+        // 2. For Android/data: Discover installed packages
+        if (isDataDir) {
+            val packageFiles = getAndroidDataPackages(context, dir)
+            packageFiles.forEach { filesSet.add(it) }
+            if (filesSet.isNotEmpty()) {
+                return filesSet
+                    .filter { showHidden || !it.name.startsWith(".") }
+                    .filter { searchQuery.isBlank() || it.name.contains(searchQuery, ignoreCase = true) }
+                    .sortedBy { it.name.lowercase() }
+                    .map { createFileItem(context, it, dir) }
+            }
         }
 
-        // 3. Try shell ls -1A and find ONLY if filesSet is empty or in restricted path
-        if (filesSet.isEmpty() || isRestrictedPath(path)) {
+        // 3. For Android/obb: Discover installed packages with OBBs
+        if (isObbDir) {
+            val obbFiles = getAndroidObbPackages(context, dir)
+            obbFiles.forEach { filesSet.add(it) }
+            if (filesSet.isNotEmpty()) {
+                return filesSet
+                    .filter { showHidden || !it.name.startsWith(".") }
+                    .filter { searchQuery.isBlank() || it.name.contains(searchQuery, ignoreCase = true) }
+                    .sortedBy { it.name.lowercase() }
+                    .map { createFileItem(context, it, dir) }
+            }
+        }
+
+        // 4. Try standard Java File.listFiles() on main path and alternate mounts
+        val altMounts = getAlternateMounts(dir)
+        for (altPath in altMounts) {
+            val altFile = File(altPath)
+            altFile.listFiles()?.forEach {
+                filesSet.add(File(dir, it.name))
+            }
+            if (filesSet.isNotEmpty()) break
+        }
+
+        // 5. Try dir.list()
+        if (filesSet.isEmpty()) {
+            for (altPath in altMounts) {
+                val altFile = File(altPath)
+                altFile.list()?.forEach {
+                    filesSet.add(File(dir, it))
+                }
+                if (filesSet.isNotEmpty()) break
+            }
+        }
+
+        // 6. Try shell listing via ls -1AF and find (strictly real items, no fakes)
+        if (filesSet.isEmpty() || isRestricted) {
             val shellFiles = listViaShell(dir)
             shellFiles.forEach { filesSet.add(it) }
 
@@ -104,43 +176,7 @@ object StorageAccessHelper {
             }
         }
 
-        // 4. For Android/data: Discover ALL installed packages
-        if (isDataDir) {
-            val packageFiles = getAndroidDataPackages(context, dir)
-            packageFiles.forEach { filesSet.add(it) }
-        }
-
-        // 5. For Android/obb: Discover ALL installed packages with OBBs
-        if (isObbDir) {
-            val obbFiles = getAndroidObbPackages(context, dir)
-            obbFiles.forEach { filesSet.add(it) }
-        }
-
-        // 6. For Package Directories inside Android/data (e.g. Android/data/com.android.chrome):
-        // Standard Android apps always have "files" and "cache" directories
-        if (isPackageDir) {
-            val standardSubfolders = listOf("files", "cache", "no_backup", "databases", "shared_prefs")
-            for (sub in standardSubfolders) {
-                val candidate = File(dir, sub)
-                if (sub == "files" || sub == "cache" || candidate.exists() || candidate.isDirectory) {
-                    filesSet.add(candidate)
-                }
-            }
-        }
-
-        // 7. For "files" directory inside a package (e.g. Android/data/com.xxx/files):
-        // Check for common folders apps create
-        if (isPackageFilesDir) {
-            val commonAppDirs = listOf("Documents", "Download", "Pictures", "Movies", "Music", "backup", "config", "data", "saved", "user", "logs", "assets", "media")
-            for (sub in commonAppDirs) {
-                val candidate = File(dir, sub)
-                if (candidate.exists() || candidate.isDirectory) {
-                    filesSet.add(candidate)
-                }
-            }
-        }
-
-        // 8. Guarantee standard root directories are always visible if in storage root
+        // 7. Storage root shortcuts guarantee
         val normPath = path.trimEnd('/')
         val extPath = Environment.getExternalStorageDirectory()?.absolutePath?.trimEnd('/') ?: "/storage/emulated/0"
         if (normPath == "/storage/emulated/0" || normPath == extPath || normPath == "/sdcard") {
@@ -157,27 +193,13 @@ object StorageAccessHelper {
             }
         }
 
-        // 9. Guarantee Android subdirectories are visible if inside /Android
+        // 8. /Android subdirectories guarantee
         if (dir.name.equals("Android", ignoreCase = true)) {
             val androidSubs = listOf("data", "obb", "media")
             val currentNames = filesSet.map { it.name.lowercase() }.toSet()
             for (sub in androidSubs) {
                 if (!currentNames.contains(sub.lowercase())) {
                     filesSet.add(File(dir, sub))
-                }
-            }
-        }
-
-        // 10. If SAF tree permission was previously granted, merge any additional items found
-        val isRestricted = isRestrictedPath(path)
-        if (isRestricted) {
-            val isObb = path.contains("Android/obb", ignoreCase = true)
-            if (SafStorageManager.hasPermission(context, isObb)) {
-                val safItems = SafStorageManager.listDirectory(context, path, showHidden, searchQuery)
-                if (safItems.isNotEmpty()) {
-                    val safNames = safItems.map { it.name.lowercase() }.toSet()
-                    val existingFromSaf = filesSet.filter { !safNames.contains(it.name.lowercase()) }
-                    return safItems + existingFromSaf.map { createFileItem(context, it, dir) }
                 }
             }
         }
@@ -198,29 +220,31 @@ object StorageAccessHelper {
     fun isDirectoryRobust(file: File, parentDir: File): Boolean {
         if (file.isDirectory) return true
         if (file.name == ".nomedia") return false
+        if (file.name.endsWith(".obb", ignoreCase = true)) return false
+
+        val lowerName = file.name.lowercase(Locale.ROOT)
+        if (detectedDirectoryNames.contains(lowerName)) return true
 
         val pName = parentDir.name.lowercase(Locale.ROOT)
         val gpName = parentDir.parentFile?.name?.lowercase(Locale.ROOT)
-        val ggpName = parentDir.parentFile?.parentFile?.name?.lowercase(Locale.ROOT)
 
-        // Android subdirectories: data, obb, media are ALWAYS folders
+        // Subdirectories of Android: data, obb, media are ALWAYS folders
         if (pName == "android") return true
 
-        // Packages inside data or obb are ALWAYS folders
+        // Packages inside Android/data or Android/obb are ALWAYS folders
         if ((pName == "data" || pName == "obb") && gpName == "android") return true
 
-        // Standard subdirectories inside an app package (files, cache, etc.) are ALWAYS folders
-        if (gpName == "data" && ggpName == "android") {
-            if (file.name in listOf("files", "cache", "no_backup", "databases", "shared_prefs", "code_cache")) return true
-            if (!file.name.contains(".")) return true
+        // Well-known standard folder names
+        if (lowerName in listOf("files", "cache", "no_backup", "databases", "shared_prefs", "code_cache", "logs", "assets", "media", "documents", "backup", "textures", "saved", "config")) {
+            return true
         }
 
-        // Inside files/ of an app package
-        if (pName == "files" && ggpName == "data") {
-            if (!file.name.contains(".")) return true
+        // If file has an extension, it is likely a file
+        if (file.name.contains(".") && file.extension.length in 1..5) {
+            return false
         }
 
-        return file.isDirectory
+        return file.isDirectory || !file.name.contains(".")
     }
 
     private fun createFileItem(context: Context, file: File, parentDir: File): FileManagerItem {
@@ -369,23 +393,30 @@ object StorageAccessHelper {
     }
 
     fun listViaShell(dir: File): List<File> {
-        val paths = mutableListOf<String>()
-        paths.add(dir.absolutePath)
-        val abs = dir.absolutePath
-        if (abs.startsWith("/storage/emulated/0/")) {
-            paths.add("/sdcard/" + abs.substringAfter("/storage/emulated/0/"))
-        }
+        val paths = getAlternateMounts(dir)
 
         for (p in paths) {
             try {
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ls -1A \"$p\" 2>/dev/null"))
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ls -1AF \"$p\" 2>/dev/null"))
                 val lines = process.inputStream.bufferedReader().readLines()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     process.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
                 } else {
                     process.waitFor()
                 }
-                val found = lines.filter { it.isNotBlank() && !it.contains("Permission denied") }.map { File(dir, it.trim()) }
+                val found = mutableListOf<File>()
+                for (line in lines) {
+                    val raw = line.trim()
+                    if (raw.isBlank() || raw.contains("Permission denied") || raw.contains("not found")) continue
+                    val isDir = raw.endsWith("/")
+                    val clean = raw.removeSuffix("/").removeSuffix("*").removeSuffix("@")
+                    if (clean.isNotBlank()) {
+                        if (isDir) {
+                            detectedDirectoryNames.add(clean.lowercase(Locale.ROOT))
+                        }
+                        found.add(File(dir, clean))
+                    }
+                }
                 if (found.isNotEmpty()) return found
             } catch (e: Exception) {
                 // continue
@@ -395,12 +426,7 @@ object StorageAccessHelper {
     }
 
     fun listViaFind(dir: File): List<File> {
-        val paths = mutableListOf<String>()
-        paths.add(dir.absolutePath)
-        val abs = dir.absolutePath
-        if (abs.startsWith("/storage/emulated/0/")) {
-            paths.add("/sdcard/" + abs.substringAfter("/storage/emulated/0/"))
-        }
+        val paths = getAlternateMounts(dir)
 
         for (p in paths) {
             try {
@@ -412,7 +438,7 @@ object StorageAccessHelper {
                     process.waitFor()
                 }
                 val found = lines
-                    .filter { it.isNotBlank() && !it.contains("Permission denied") }
+                    .filter { it.isNotBlank() && !it.contains("Permission denied") && !it.contains("not found") }
                     .map { line ->
                         val fileName = line.trim().substringAfterLast('/')
                         File(dir, fileName)

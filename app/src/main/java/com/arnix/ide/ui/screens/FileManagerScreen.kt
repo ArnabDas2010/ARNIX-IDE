@@ -8,6 +8,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -147,8 +149,16 @@ fun FileManagerScreen(
         }
     }
 
-    val fileList = remember(currentPath, showHidden, searchQuery, refreshKey) {
-        StorageAccessHelper.listFilesRobust(context, currentDir, showHidden, searchQuery)
+    var isLoading by remember(currentPath, refreshKey) { mutableStateOf(true) }
+    var fileList by remember { mutableStateOf<List<FileManagerItem>>(emptyList()) }
+
+    LaunchedEffect(currentPath, showHidden, searchQuery, refreshKey) {
+        isLoading = true
+        val list = withContext(Dispatchers.IO) {
+            StorageAccessHelper.listFilesRobust(context, currentDir, showHidden, searchQuery)
+        }
+        fileList = list
+        isLoading = false
     }
 
     val folderCount = remember(fileList) { fileList.count { it.isDirectory } }
@@ -689,7 +699,29 @@ fun FileManagerScreen(
                 .padding(innerPadding)
                 .background(IdeBackground)
         ) {
-            if (filteredList.isEmpty()) {
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = IdePrimary,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Text(
+                            text = "Loading files...",
+                            color = IdeTextMuted,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            } else if (filteredList.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize().padding(24.dp),
                     contentAlignment = Alignment.Center

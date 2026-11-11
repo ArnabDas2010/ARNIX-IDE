@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +38,7 @@ fun EditorTopBar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onToggleFind: () -> Unit,
+    onPreview: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -163,10 +165,52 @@ fun EditorTopBar(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(4.dp))
+                    val activeTab = tabs.find { it.id == activeTabId }
+                    val isPreviewable = activeTab?.fileName?.let {
+                        it.endsWith(".html", ignoreCase = true) ||
+                        it.endsWith(".htm", ignoreCase = true) ||
+                        it.endsWith(".md", ignoreCase = true) ||
+                        it.endsWith(".markdown", ignoreCase = true)
+                    } == true
+
+                    if (isPreviewable && onPreview != null) {
+                        Button(
+                            onClick = onPreview,
+                            modifier = Modifier
+                                .height(30.dp)
+                                .testTag("btn_preview"),
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = IdeAccentViolet,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_document),
+                                contentDescription = "Preview",
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "PREVIEW",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(3.dp))
+                    }
+
+                    Spacer(modifier = Modifier.width(2.dp))
 
                     Button(
-                        onClick = onRun,
+                        onClick = {
+                            if (isPreviewable && onPreview != null) {
+                                onPreview()
+                            } else {
+                                onRun()
+                            }
+                        },
                         modifier = Modifier
                             .height(30.dp)
                             .testTag("btn_run"),
@@ -184,7 +228,7 @@ fun EditorTopBar(
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            text = "RUN",
+                            text = if (isPreviewable) "RUN" else "RUN",
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp
                         )

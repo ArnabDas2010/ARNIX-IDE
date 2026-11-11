@@ -9,8 +9,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.BorderStroke
+import com.arnix.ide.data.repository.ArchiveHelper
+import com.arnix.ide.ui.components.ArchiveViewerDialog
+import com.arnix.ide.ui.components.ImageViewerDialog
+import com.arnix.ide.ui.components.TemplatePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -96,6 +101,16 @@ fun FileManagerScreen(
     var createNameInput by remember { mutableStateOf("") }
 
     var showNewMenu by remember { mutableStateOf(false) }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    // Archive / Image / Template / Compression states
+    var archiveToView by remember { mutableStateOf<File?>(null) }
+    var imageToView by remember { mutableStateOf<File?>(null) }
+    var showTemplatePicker by remember { mutableStateOf(false) }
+    var itemToCompress by remember { mutableStateOf<FileManagerItem?>(null) }
+    var compressZipNameInput by remember { mutableStateOf("") }
+    var isCompressing by remember { mutableStateOf(false) }
 
     // Double-click tracker for folders
     var lastClickedFolderPath by remember { mutableStateOf<String?>(null) }
@@ -340,6 +355,21 @@ fun FileManagerScreen(
                                             createIsFolder = true
                                             createNameInput = ""
                                             showCreateDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("New from Template...") },
+                                        leadingIcon = {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_file_code),
+                                                contentDescription = null,
+                                                tint = IdeAccentViolet,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            showNewMenu = false
+                                            showTemplatePicker = true
                                         }
                                     )
                                 }
@@ -790,8 +820,8 @@ fun FileManagerScreen(
                                 Text("Authorize $folderTargetName", fontWeight = FontWeight.Bold)
                             }
                         } else {
-                            val hiddenCount = remember(currentPath, refreshKey) {
-                                StorageAccessHelper.listFilesRobust(context, currentDir, showHidden = true).count { it.isHidden }
+                            val hiddenCount = remember(fileList) {
+                                fileList.count { it.isHidden }
                             }
 
                             Text(
@@ -884,8 +914,25 @@ fun FileManagerScreen(
                             },
                             onSelectAsWorkspace = { onSelectWorkspaceFolder(item.path) },
                             onFileClick = {
-                                // Open file directly into Code Editor tab WITHOUT changing workspace!
-                                onOpenFileInEditor(File(item.path))
+                                val ext = item.extension.lowercase()
+                                if (isArchiveExtension(ext)) {
+                                    archiveToView = File(item.path)
+                                } else if (isImageExtension(ext)) {
+                                    imageToView = File(item.path)
+                                } else {
+                                    // Open file directly into Code Editor tab WITHOUT changing workspace!
+                                    onOpenFileInEditor(File(item.path))
+                                }
+                            },
+                            onCompress = {
+                                itemToCompress = item
+                                compressZipNameInput = "${item.name}.zip"
+                            },
+                            onInspectArchive = {
+                                archiveToView = File(item.path)
+                            },
+                            onViewImage = {
+                                imageToView = File(item.path)
                             },
                             onCopy = {
                                 clipboardItem = ActiveClipboardItem(item = item, isCut = false)
@@ -1384,6 +1431,138 @@ fun FileManagerScreen(
                     }
                 )
             }
+
+            // Archive Viewer Dialog
+            archiveToView?.let { archiveFile ->
+                ArchiveViewerDialog(
+                    archiveFile = archiveFile,
+                    onDismiss = { archiveToView = null },
+                    onExtractionComplete = { refreshKey++ }
+                )
+            }
+
+            // Image Viewer Dialog
+            imageToView?.let { imgFile ->
+                ImageViewerDialog(
+                    imageFile = imgFile,
+                    onDismiss = { imageToView = null }
+                )
+            }
+
+            // Starter Template Picker Dialog
+            if (showTemplatePicker) {
+                TemplatePickerDialog(
+                    targetFolder = currentDir,
+                    onDismiss = { showTemplatePicker = false },
+                    onProjectCreated = { createdFolder, primaryFile ->
+                        refreshKey++
+                        onNavigateTo(createdFolder.absolutePath)
+                        onOpenFileInEditor(primaryFile)
+                    }
+                )
+            }
+
+            // Compress to Zip Dialog
+            if (itemToCompress != null) {
+                AlertDialog(
+                    onDismissRequest = { if (!isCompressing) itemToCompress = null },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_archive),
+                                contentDescription = null,
+                                tint = IdeTertiary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Compress to Zip",
+                                color = IdeTextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Compressing '${itemToCompress!!.name}' into a standard zip archive.",
+                                color = IdeTextSecondary,
+                                fontSize = 12.sp
+                            )
+                            OutlinedTextField(
+                                value = compressZipNameInput,
+                                onValueChange = { compressZipNameInput = it },
+                                label = { Text("Zip Archive Name") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (isCompressing) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator(color = IdePrimary, modifier = Modifier.size(16.dp))
+                                    Text("Compressing files, please wait...", color = IdeTextMuted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val item = itemToCompress ?: return@Button
+                                val zipName = if (compressZipNameInput.endsWith(".zip", true)) {
+                                    compressZipNameInput
+                                } else {
+                                    "${compressZipNameInput}.zip"
+                                }
+                                val outZipFile = File(currentDir, zipName)
+
+                                isCompressing = true
+                                coroutineScope.launch {
+                                    val sourceFile = File(item.path)
+                                    val success = withContext(Dispatchers.IO) {
+                                        if (item.isDirectory) {
+                                            val children = sourceFile.listFiles()?.toList() ?: listOf(sourceFile)
+                                            ArchiveHelper.createZip(children, outZipFile, sourceFile)
+                                        } else {
+                                            ArchiveHelper.createZip(listOf(sourceFile), outZipFile, sourceFile.parentFile ?: currentDir)
+                                        }
+                                    }
+                                    isCompressing = false
+                                    itemToCompress = null
+                                    if (success) {
+                                        Toast.makeText(context, "Archive created: ${outZipFile.name}", Toast.LENGTH_SHORT).show()
+                                        refreshKey++
+                                    } else {
+                                        Toast.makeText(context, "Compression failed", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = !isCompressing && compressZipNameInput.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = IdeTertiary)
+                        ) {
+                            Text("Create Zip", color = IdeBackground, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { itemToCompress = null },
+                            enabled = !isCompressing
+                        ) {
+                            Text("Cancel", color = IdeTextMuted)
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -1399,6 +1578,9 @@ fun FileManagerRowItem(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDetails: () -> Unit,
+    onCompress: () -> Unit,
+    onInspectArchive: () -> Unit,
+    onViewImage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -1585,6 +1767,58 @@ fun FileManagerRowItem(
                                 }
                             )
                         }
+
+                        if (!item.isDirectory && isArchiveExtension(item.extension)) {
+                            DropdownMenuItem(
+                                text = { Text("Inspect Archive") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_archive),
+                                        contentDescription = null,
+                                        tint = IdeTertiary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onInspectArchive()
+                                }
+                            )
+                        }
+
+                        if (!item.isDirectory && isImageExtension(item.extension)) {
+                            DropdownMenuItem(
+                                text = { Text("View Image") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_image),
+                                        contentDescription = null,
+                                        tint = IdeAccentViolet,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onViewImage()
+                                }
+                            )
+                        }
+
+                        DropdownMenuItem(
+                            text = { Text("Compress to Zip") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_archive),
+                                    contentDescription = null,
+                                    tint = IdeTertiary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onCompress()
+                            }
+                        )
 
                         DropdownMenuItem(
                             text = { Text("Copy") },

@@ -15,4 +15,12 @@
     <string name="action_find">Find</string>
     <string name="action_close">Close Tab</string>
     <string name="terminal_welcome">ARNIX Shell v1.0.0\nType \'help\' to list available commands.</string>
+    <string name="action_preview">Live Preview</string>
+    <string name="action_extract">Extract All</string>
+    <string name="action_compress">Compress to Zip</string>
+    <string name="action_open_external">Open in External App</string>
+    <string name="action_templates">New from Template</string>
+    <string name="title_archive_viewer">Archive Explorer</string>
+    <string name="title_image_viewer">Image Viewer</string>
+    <string name="title_template_picker">Starter Templates</string>
 </resources>

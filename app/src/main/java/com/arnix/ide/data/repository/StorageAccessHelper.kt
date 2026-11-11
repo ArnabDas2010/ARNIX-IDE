@@ -81,15 +81,10 @@ object StorageAccessHelper {
             val sub = abs.substringAfter("/storage/emulated/0/")
             paths.add("/sdcard/$sub")
             paths.add("/mnt/user/0/primary/$sub")
-            paths.add("/mnt/runtime/full/emulated/0/$sub")
-            paths.add("/mnt/runtime/write/emulated/0/$sub")
-            paths.add("/mnt/runtime/default/emulated/0/$sub")
-            paths.add("/storage/self/primary/$sub")
         } else if (abs.startsWith("/sdcard/")) {
             val sub = abs.substringAfter("/sdcard/")
             paths.add("/storage/emulated/0/$sub")
             paths.add("/mnt/user/0/primary/$sub")
-            paths.add("/mnt/runtime/full/emulated/0/$sub")
         }
         return paths.toList()
     }
@@ -144,36 +139,37 @@ object StorageAccessHelper {
             }
         }
 
-        // 4. Try standard Java File.listFiles() on main path and alternate mounts
-        val altMounts = getAlternateMounts(dir)
-        for (altPath in altMounts) {
-            val altFile = File(altPath)
-            altFile.listFiles()?.forEach {
-                filesSet.add(File(dir, it.name))
+        // 4. Direct standard filesystem check
+        val directFiles = dir.listFiles()
+        if (directFiles != null) {
+            if (directFiles.isNotEmpty()) {
+                directFiles.forEach { filesSet.add(it) }
+            } else if (!isRestricted) {
+                // Verified empty directory on accessible storage — return immediately without running heavy shell commands!
+                return emptyList()
             }
-            if (filesSet.isNotEmpty()) break
         }
 
-        // 5. Try dir.list()
-        if (filesSet.isEmpty()) {
+        // 5. Alternate mount points only if directFiles was null (i.e. blocked POSIX access)
+        if (directFiles == null) {
+            val altMounts = getAlternateMounts(dir)
             for (altPath in altMounts) {
                 val altFile = File(altPath)
-                altFile.list()?.forEach {
-                    filesSet.add(File(dir, it))
+                val list = altFile.listFiles()
+                if (list != null) {
+                    list.forEach { filesSet.add(File(dir, it.name)) }
+                    if (list.isEmpty() && !isRestricted) {
+                        return emptyList()
+                    }
+                    break
                 }
-                if (filesSet.isNotEmpty()) break
             }
         }
 
-        // 6. Try shell listing via ls -1AF and find (strictly real items, no fakes)
-        if (filesSet.isEmpty() || isRestricted) {
+        // 6. Only fallback to shell if access is restricted or directFiles was null
+        if (filesSet.isEmpty() && (isRestricted || directFiles == null)) {
             val shellFiles = listViaShell(dir)
             shellFiles.forEach { filesSet.add(it) }
-
-            if (filesSet.isEmpty()) {
-                val findFiles = listViaFind(dir)
-                findFiles.forEach { filesSet.add(it) }
-            }
         }
 
         // 7. Storage root shortcuts guarantee

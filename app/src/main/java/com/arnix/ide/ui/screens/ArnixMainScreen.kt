@@ -24,10 +24,12 @@ import androidx.compose.ui.unit.sp
 import com.arnix.ide.R
 import com.arnix.ide.ui.components.CodeEditorView
 import com.arnix.ide.ui.components.EditorTopBar
+import com.arnix.ide.ui.components.LivePreviewDialog
 import com.arnix.ide.ui.components.QuickSymbolBar
 import com.arnix.ide.ui.theme.*
 import com.arnix.ide.ui.viewmodel.IdeScreen
 import com.arnix.ide.ui.viewmodel.IdeViewModel
+import java.io.File
 
 @Composable
 fun ArnixMainScreen(
@@ -53,6 +55,7 @@ fun ArnixMainScreen(
     }
 
     val activeTab = openTabs.find { it.id == activeTabId }
+    var previewTab by remember { mutableStateOf<com.arnix.ide.data.model.CodeTab?>(null) }
 
     // Auto-fit & Responsive Layout via BoxWithConstraints
     BoxWithConstraints(
@@ -254,7 +257,8 @@ fun ArnixMainScreen(
                                     onRun = { viewModel.runProject() },
                                     onUndo = { viewModel.undo() },
                                     onRedo = { viewModel.redo() },
-                                    onToggleFind = { viewModel.toggleFindBar() }
+                                    onToggleFind = { viewModel.toggleFindBar() },
+                                    onPreview = { previewTab = activeTab }
                                 )
 
                                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -291,7 +295,8 @@ fun ArnixMainScreen(
                             gitState = gitState,
                             terminalLines = terminalLines,
                             settings = settings,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            onPreview = { previewTab = activeTab }
                         )
                     }
                 }
@@ -459,7 +464,8 @@ fun ArnixMainScreen(
                         gitState = gitState,
                         terminalLines = terminalLines,
                         settings = settings,
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        onPreview = { previewTab = activeTab }
                     )
                 }
             }
@@ -583,6 +589,16 @@ fun ArnixMainScreen(
                 onClose = { viewModel.closeFileManager() }
             )
         }
+
+        // Live Web & Markdown Preview Dialog
+        previewTab?.let { tab ->
+            LivePreviewDialog(
+                fileName = tab.fileName,
+                fileContent = tab.content,
+                parentDirectory = if (tab.filePath.isNotBlank()) File(tab.filePath).parentFile else null,
+                onDismiss = { previewTab = null }
+            )
+        }
     }
 }
 
@@ -598,7 +614,8 @@ private fun MainContentRouter(
     gitState: com.arnix.ide.data.model.GitState,
     terminalLines: List<com.arnix.ide.data.model.TerminalLine>,
     settings: com.arnix.ide.data.model.IdeSettings,
-    viewModel: IdeViewModel
+    viewModel: IdeViewModel,
+    onPreview: () -> Unit = {}
 ) {
     when (currentScreen) {
         IdeScreen.EDITOR -> {
@@ -612,7 +629,8 @@ private fun MainContentRouter(
                     onRun = { viewModel.runProject() },
                     onUndo = { viewModel.undo() },
                     onRedo = { viewModel.redo() },
-                    onToggleFind = { viewModel.toggleFindBar() }
+                    onToggleFind = { viewModel.toggleFindBar() },
+                    onPreview = onPreview
                 )
 
                 if (activeTab != null) {

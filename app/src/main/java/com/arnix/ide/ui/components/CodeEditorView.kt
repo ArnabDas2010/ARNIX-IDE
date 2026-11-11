@@ -123,12 +123,8 @@ fun CodeEditorView(
                             if (zoom != 1f) {
                                 zoomFactor = (zoomFactor * zoom).coerceIn(0.5f, 3.0f)
                             }
-                            if (pan.x != 0f || pan.y != 0f) {
-                                coroutineScope.launch {
-                                    if (pan.x != 0f) horizontalScrollState.scrollBy(-pan.x)
-                                    if (pan.y != 0f) verticalScrollState.scrollBy(-pan.y)
-                                }
-                            }
+                            if (pan.x != 0f) horizontalScrollState.dispatchRawDelta(-pan.x)
+                            if (pan.y != 0f) verticalScrollState.dispatchRawDelta(-pan.y)
                             event.changes.forEach { it.consume() }
                         } else if (pointerCount == 1) {
                             val change = event.changes.first()
@@ -139,12 +135,10 @@ fun CodeEditorView(
                                 pastTouchSlop = true
                             }
 
-                            // Once touch slop is passed, move both axes simultaneously (corner-to-corner)
+                            // Once touch slop is passed, move both axes simultaneously in any direction without axis locking
                             if (pastTouchSlop && (dragDelta.x != 0f || dragDelta.y != 0f)) {
-                                coroutineScope.launch {
-                                    if (dragDelta.x != 0f) horizontalScrollState.scrollBy(-dragDelta.x)
-                                    if (dragDelta.y != 0f) verticalScrollState.scrollBy(-dragDelta.y)
-                                }
+                                if (dragDelta.x != 0f) horizontalScrollState.dispatchRawDelta(-dragDelta.x)
+                                if (dragDelta.y != 0f) verticalScrollState.dispatchRawDelta(-dragDelta.y)
                                 change.consume()
                             }
                         }
@@ -153,13 +147,13 @@ fun CodeEditorView(
             }
             .testTag("code_editor_view")
     ) {
-        // Shared 2D scroll canvas
+        // Shared 2D scroll canvas: enabled = false prevents built-in 1D drag interceptors from locking horizontal/vertical motion
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(verticalScrollState)
+                .verticalScroll(verticalScrollState, enabled = false)
         ) {
-            // 1. Line numbers gutter (Fixed to left, drag on gutter also scrolls in 2D freely)
+            // 1. Line numbers gutter (Fixed to left, moves with vertical scroll)
             if (settings.showLineNumbers) {
                 Box(
                     modifier = Modifier
@@ -174,15 +168,6 @@ fun CodeEditorView(
                             )
                         }
                         .padding(top = 12.dp, bottom = 400.dp, start = 4.dp, end = 8.dp)
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                coroutineScope.launch {
-                                    if (dragAmount.x != 0f) horizontalScrollState.scrollBy(-dragAmount.x)
-                                    if (dragAmount.y != 0f) verticalScrollState.scrollBy(-dragAmount.y)
-                                }
-                            }
-                        }
                         .testTag("line_numbers_column")
                 ) {
                     Text(
@@ -200,7 +185,7 @@ fun CodeEditorView(
             val codeScrollModifier = if (settings.wordWrap) {
                 Modifier.fillMaxWidth()
             } else {
-                Modifier.horizontalScroll(horizontalScrollState)
+                Modifier.horizontalScroll(horizontalScrollState, enabled = false)
             }
 
             Box(

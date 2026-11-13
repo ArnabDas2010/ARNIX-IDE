@@ -8,10 +8,13 @@ import com.arnix.ide.data.model.*
 import com.arnix.ide.data.repository.GitRepository
 import com.arnix.ide.data.repository.StorageAccessHelper
 import com.arnix.ide.data.repository.WorkspaceRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 enum class IdeScreen {
@@ -265,23 +268,16 @@ class IdeViewModel(
 
         when (cmd) {
             "help" -> {
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "ARNIX Built-in Commands:", TerminalLineType.INFO))
+                lines.add(TerminalLine(UUID.randomUUID().toString(), "ARNIX Shell & IDE Commands:", TerminalLineType.INFO))
                 lines.add(TerminalLine(UUID.randomUUID().toString(), "  run / build       Build and execute current project", TerminalLineType.OUTPUT))
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "  ls / dir          List workspace directory files", TerminalLineType.OUTPUT))
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "  cat <file>        Display file contents", TerminalLineType.OUTPUT))
                 lines.add(TerminalLine(UUID.randomUUID().toString(), "  git status        Show working tree status", TerminalLineType.OUTPUT))
                 lines.add(TerminalLine(UUID.randomUUID().toString(), "  git branch        List and switch branches", TerminalLineType.OUTPUT))
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "  clear             Clear terminal screen", TerminalLineType.OUTPUT))
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "  echo <text>       Print message to console", TerminalLineType.OUTPUT))
+                lines.add(TerminalLine(UUID.randomUUID().toString(), "  clear / cls       Clear terminal screen", TerminalLineType.OUTPUT))
+                lines.add(TerminalLine(UUID.randomUUID().toString(), "  <shell cmd>       pwd, ls -la, uname -a, cat, df, date, etc.", TerminalLineType.OUTPUT))
+                _terminalLines.value = lines
             }
             "clear", "cls" -> {
                 _terminalLines.value = emptyList()
-                return
-            }
-            "ls", "dir" -> {
-                val files = _rootFiles.value
-                val formatted = files.joinToString("  ") { if (it.isDirectory) "${it.name}/" else it.name }
-                lines.add(TerminalLine(UUID.randomUUID().toString(), formatted, TerminalLineType.OUTPUT))
             }
             "git" -> {
                 val subCmd = parts.getOrNull(1)?.lowercase() ?: ""
@@ -316,20 +312,48 @@ class IdeViewModel(
                         lines.add(TerminalLine(UUID.randomUUID().toString(), "git: '$subCmd' is supported via the Git tab.", TerminalLineType.INFO))
                     }
                 }
+                _terminalLines.value = lines
             }
             "run", "build", "gradle" -> {
+                _terminalLines.value = lines
                 runProject()
-                return
-            }
-            "echo" -> {
-                val text = parts.drop(1).joinToString(" ")
-                lines.add(TerminalLine(UUID.randomUUID().toString(), text, TerminalLineType.OUTPUT))
             }
             else -> {
-                lines.add(TerminalLine(UUID.randomUUID().toString(), "bash: $cmd: command simulated. Enter 'help' for available commands.", TerminalLineType.INFO))
+                _terminalLines.value = lines
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val workingDir = File(_fileManagerPath.value).let {
+                            if (it.exists() && it.isDirectory) it else getApplication<Application>().filesDir
+                        }
+                        val process = ProcessBuilder("sh", "-c", trimmed)
+                            .directory(workingDir)
+                            .redirectErrorStream(true)
+                            .start()
+
+                        val output = process.inputStream.bufferedReader().use { it.readText() }
+                        val exitCode = process.waitFor()
+
+                        withContext(Dispatchers.Main) {
+                            val updated = _terminalLines.value.toMutableList()
+                            if (output.isNotBlank()) {
+                                output.trim().lines().forEach { line ->
+                                    updated.add(TerminalLine(UUID.randomUUID().toString(), line, if (exitCode == 0) TerminalLineType.OUTPUT else TerminalLineType.ERROR))
+                                }
+                            } else if (exitCode != 0) {
+                                updated.add(TerminalLine(UUID.randomUUID().toString(), "Process exited with code $exitCode", TerminalLineType.ERROR))
+                            }
+                            _terminalLines.value = updated
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            val updated = _terminalLines.value.toMutableList()
+                            updated.add(TerminalLine(UUID.randomUUID().toString(), "sh: ${e.localizedMessage}", TerminalLineType.ERROR))
+                            _terminalLines.value = updated
+                        }
+                    }
+                }
             }
         }
-        _terminalLines.value = lines
     }
 
     private val _rootFiles = workspaceRepo.rootFiles

@@ -50,7 +50,7 @@ fun TerminalScreen(
         }
     }
 
-    val quickCommands = listOf("help", "run", "ls", "git status", "clear")
+    val quickCommands = listOf("ls -la", "pwd", "date", "uname -a", "df -h", "help", "clear")
 
     Column(
         modifier = modifier
